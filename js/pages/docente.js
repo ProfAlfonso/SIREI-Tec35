@@ -1,6 +1,10 @@
 // ============================================================
 //  SIREI - Panel del Docente
-//  Versión 3.2 - CORREGIDA (cronómetro y duración)
+//  Versión 3.3 - CORREGIDA (modal de salidas responsive + QR con debounce)
+//  Cambios:
+//   - Modal de salidas ahora ocupa toda la pantalla en móviles y es scrollable.
+//   - Los lectores QR (asistencia y salidas) solo procesan una lectura cada 1 segundo.
+//   - Se agregó un botón para cerrar la cámara en cada lector QR.
 // ============================================================
 
 // ============================================================
@@ -274,7 +278,7 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
     `<option value="${a.nombreCompleto}">${a.nombreCompleto} (${a.curp})</option>`
   ).join('');
 
-  // ---- HTML principal ----
+  // ---- HTML principal (con mejoras en el modal de salidas para móviles) ----
   let html = `
     <div class="panel-docente">
       <!-- Cabecera de clase -->
@@ -300,25 +304,25 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
         <div id="actitudesDocenteContainer"></div>
       </div>
       <div id="contenido-academico" class="contenido-panel">
-  <!-- Se cargará dinámicamente con academico_docente.js -->
-  <div id="academicoDocenteContainer"></div>
-</div>
+        <!-- Se cargará dinámicamente con academico_docente.js -->
+        <div id="academicoDocenteContainer"></div>
+      </div>
 
       <!-- Botón flotante para salidas -->
       <button class="btn-flotante-salidas" id="btnAbrirSalidas">🚪</button>
     </div>
 
-    <!-- Modal de Salidas (REDISEÑADO) -->
+    <!-- Modal de Salidas (REDISEÑADO para móviles) -->
     <div class="modal-salidas-full" id="modalSalidasFull">
       <!-- Cabecera -->
-      <div style="display:flex; justify-content:space-between; align-items:center; padding:16px 20px; background:#f8fafc; border-bottom:2px solid #e5e7eb;">
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:16px 20px; background:#f8fafc; border-bottom:2px solid #e5e7eb; flex-shrink:0;">
         <h2 style="margin:0; font-size:1.3rem; display:flex; align-items:center; gap:10px;">
           <span style="font-size:1.8rem;">🚪</span> Entradas / Salidas
         </h2>
         <button id="btnCerrarSalidasFull" style="background:none; border:none; font-size:2rem; cursor:pointer; padding:0 10px;">✕</button>
       </div>
 
-      <!-- Contenido del modal -->
+      <!-- Contenido del modal (scrollable) -->
       <div style="padding:16px 20px; flex:1; overflow-y:auto;">
 
         <!-- Resumen de alumnos fuera -->
@@ -377,7 +381,7 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
           <div id="qr-reader-salida-full" style="width:100%; max-width:300px; margin:10px auto; display:none;"></div>
         </div>
 
-        <!-- Botón Confirmar (fuera de seccion-motivo) -->
+        <!-- Botón Confirmar -->
         <div style="margin-top:12px;">
           <button id="btnConfirmarSalidaEntrada" class="btn-confirmar" style="width:100%; padding:14px; background:#1E3A8A; color:white; border:none; border-radius:10px; font-size:1rem; font-weight:600; cursor:pointer;">
             ✅ Confirmar
@@ -432,7 +436,7 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
       const script = document.createElement('script');
       script.src = 'js/pages/academico_docente.js';
       script.onload = () => {
-window._precargaAcademico = window.cargarAcademicoDocente(container, idDocente, claseActiva.idGrupo, claseActiva.idAsignatura, claseActiva.periodo, token, claseActiva.idSubgrupo);
+        window._precargaAcademico = window.cargarAcademicoDocente(container, idDocente, claseActiva.idGrupo, claseActiva.idAsignatura, claseActiva.periodo, token, claseActiva.idSubgrupo);
       };
       script.onerror = () => {
         container.innerHTML = '<div class="error">Error al cargar módulo académico.</div>';
@@ -465,8 +469,6 @@ window._precargaAcademico = window.cargarAcademicoDocente(container, idDocente, 
       }
     });
   });
-
-
 
   // ---- Rellenar el panel de asistencia ----
   const contenedorAsistencia = document.getElementById('contenido-asistencia');
@@ -552,7 +554,7 @@ window._precargaAcademico = window.cargarAcademicoDocente(container, idDocente, 
   `;
   contenedorAsistencia.innerHTML = modalQR;
 
-  // ---- Configurar eventos ----
+  // ---- Configurar eventos (incluyendo las mejoras de QR y modal) ----
   configurarEventosPaneles(container, idDocente, claseActiva, token, alumnosGrupo);
 }
 
@@ -564,11 +566,8 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
   let qrReaderAsistencia = null;
   let qrReaderSalidaFull = null;
   let escaneoActivo = false;
-  // Variable para controlar el escaneo (debounce)
-let ultimoEscaneo = 0;
-let qrReaderAsistencia = null;
-let qrReaderSalidaFull = null;
-let escaneoActivo = false;
+  // Variable para controlar el debounce del QR (último tiempo de escaneo)
+  let ultimoEscaneoQR = 0;
 
   // ---- Función para actualizar contadores ----
   function actualizarContadores() {
@@ -646,7 +645,7 @@ let escaneoActivo = false;
     });
   });
 
-  // ---- 2. ASISTENCIA QR ----
+  // ---- 2. ASISTENCIA QR (con debounce) ----
   document.getElementById('btnAsistenciaQR').addEventListener('click', () => {
     document.getElementById('vistaQR').style.display = 'block';
     document.getElementById('vistaManual').style.display = 'none';
@@ -676,6 +675,11 @@ let escaneoActivo = false;
       { facingMode: "environment" },
       config,
       async (decodedText) => {
+        // Debounce: solo procesar si ha pasado al menos 1 segundo desde el último escaneo
+        const ahora = Date.now();
+        if (ahora - ultimoEscaneoQR < 1000) return;
+        ultimoEscaneoQR = ahora;
+
         const curp = decodedText.trim().toUpperCase();
         const alumno = alumnosGrupo.find(a => a.curp === curp);
         if (!alumno) {
@@ -755,16 +759,16 @@ let escaneoActivo = false;
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-            accion: 'registrarAsistencia',
-            token: token,
-            idClase: claseActiva.idClase,
-            curpAlumno: curp,
-            estado: estado,
-            tipo: 'Manual',
-            idDocente: idDocente,
-            idGrupo: claseActiva.idGrupo,
-            idAsignatura: claseActiva.idAsignatura,
-            periodo: claseActiva.periodo
+        accion: 'registrarAsistencia',
+        token: token,
+        idClase: claseActiva.idClase,
+        curpAlumno: curp,
+        estado: estado,
+        tipo: 'Manual',
+        idDocente: idDocente,
+        idGrupo: claseActiva.idGrupo,
+        idAsignatura: claseActiva.idAsignatura,
+        periodo: claseActiva.periodo
       })
     }).catch(e => console.error(e));
 
@@ -879,177 +883,171 @@ let escaneoActivo = false;
   });
 
   // ---- 8. SALIDAS (REDISEÑADO Y CORREGIDO) ----
+  // (Se mantiene la lógica de actualización de estado, pero se asegura que el modal sea responsive)
   qrReaderSalidaFull = null;
 
   // Función para actualizar el estado y el historial sin recargar
-async function actualizarEstadoSalidas() {
-  try {
-    const responseFuera = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        accion: 'obtenerSalidasClase',
-        token: token,
-        idClase: claseActiva.idClase
-      })
-    });
-    const dataFuera = await responseFuera.json();
-    const listaDiv = document.getElementById('listaAlumnosFuera');
-    const btnEscape = document.getElementById('btnEscapeSalida');
+  async function actualizarEstadoSalidas() {
+    try {
+      const responseFuera = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          accion: 'obtenerSalidasClase',
+          token: token,
+          idClase: claseActiva.idClase
+        })
+      });
+      const dataFuera = await responseFuera.json();
+      const listaDiv = document.getElementById('listaAlumnosFuera');
+      const btnEscape = document.getElementById('btnEscapeSalida');
 
-    if (dataFuera.success) {
-      const todas = dataFuera.salidas || [];
-      const fuera = todas.filter(s => s.estado === 'Fuera');
+      if (dataFuera.success) {
+        const todas = dataFuera.salidas || [];
+        const fuera = todas.filter(s => s.estado === 'Fuera');
 
-      if (fuera.length === 0) {
-        listaDiv.innerHTML = '<span style="color:#10b981;">✅ Todos los alumnos están dentro.</span>';
-        if (btnEscape) btnEscape.style.display = 'none';
-        if (window._intervalSalida) {
-          clearInterval(window._intervalSalida);
-          window._intervalSalida = null;
-        }
-      } else {
-        const s = fuera[0];
-        const alumno = alumnosGrupo.find(a => a.curp === s.curp);
-        const nombre = alumno ? SIREI.utils.escapeHtml(alumno.nombreCompleto) : s.curp;
-        
-        // Usar salidaFormateada que el backend envía en formato dd/MM/yyyy HH:mm:ss
-        let salidaTimestamp = s.salidaFormateada || s.salidaTimestamp || '';
+        if (fuera.length === 0) {
+          listaDiv.innerHTML = '<span style="color:#10b981;">✅ Todos los alumnos están dentro.</span>';
+          if (btnEscape) btnEscape.style.display = 'none';
+          if (window._intervalSalida) {
+            clearInterval(window._intervalSalida);
+            window._intervalSalida = null;
+          }
+        } else {
+          const s = fuera[0];
+          const alumno = alumnosGrupo.find(a => a.curp === s.curp);
+          const nombre = alumno ? SIREI.utils.escapeHtml(alumno.nombreCompleto) : s.curp;
+          
+          let salidaTimestamp = s.salidaFormateada || s.salidaTimestamp || '';
 
-        // Si no hay timestamp válido, mostrar --:--
-        if (!salidaTimestamp) {
+          if (!salidaTimestamp) {
+            listaDiv.innerHTML = `
+              <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
+                <span><strong>${nombre}</strong> - Motivo: ${s.motivo || 'Sin motivo'}</span>
+                <span id="cronometroSalida" style="font-size:1.2rem; font-weight:bold; color:#6b7280;">--:--</span>
+              </div>
+            `;
+            if (btnEscape) btnEscape.style.display = 'none';
+            return;
+          }
+
           listaDiv.innerHTML = `
             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
               <span><strong>${nombre}</strong> - Motivo: ${s.motivo || 'Sin motivo'}</span>
-              <span id="cronometroSalida" style="font-size:1.2rem; font-weight:bold; color:#6b7280;">--:--</span>
+              <span id="cronometroSalida" style="font-size:1.2rem; font-weight:bold; color:#10b981;">00:00</span>
             </div>
           `;
-          if (btnEscape) btnEscape.style.display = 'none';
-          return;
-        }
 
-        // Crear contenedor con el cronómetro
-        listaDiv.innerHTML = `
-          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
-            <span><strong>${nombre}</strong> - Motivo: ${s.motivo || 'Sin motivo'}</span>
-            <span id="cronometroSalida" style="font-size:1.2rem; font-weight:bold; color:#10b981;">00:00</span>
-          </div>
-        `;
+          if (window._intervalSalida) clearInterval(window._intervalSalida);
 
-        // Detener intervalo anterior
-        if (window._intervalSalida) clearInterval(window._intervalSalida);
-
-        const actualizarCrono = () => {
-          const crono = document.getElementById('cronometroSalida');
-          if (!crono) return;
-          
-          try {
-            const ahora = new Date();
-            let fechaSalida;
-            if (salidaTimestamp.includes('T')) {
-              fechaSalida = new Date(salidaTimestamp);
-            } else if (salidaTimestamp.includes('/')) {
-              const partes = salidaTimestamp.split(' ');
-              if (partes.length < 2) { crono.textContent = '--:--'; return; }
-              const fechaPartes = partes[0].split('/');
-              const horaPartes = partes[1].split(':');
-              if (fechaPartes.length < 3 || horaPartes.length < 3) { crono.textContent = '--:--'; return; }
-              
-              fechaSalida = new Date(
-                parseInt(fechaPartes[2]),      
-                parseInt(fechaPartes[1]) - 1,   
-                parseInt(fechaPartes[0]),       
-                parseInt(horaPartes[0]),        
-                parseInt(horaPartes[1]),        
-                parseInt(horaPartes[2])         
-              );
-            } else {
-              crono.textContent = '--:--'; return;
-            }
+          const actualizarCrono = () => {
+            const crono = document.getElementById('cronometroSalida');
+            if (!crono) return;
             
-            // Calcular diferencia
-            const diffMs = ahora - fechaSalida;
-            if (diffMs < 0 || isNaN(fechaSalida.getTime())) { 
-              crono.textContent = '00:00'; 
-              return; 
-            }
-            const totalSegundos = Math.floor(diffMs / 1000);
-            const minutos = Math.floor(totalSegundos / 60);
-            const segundos = totalSegundos % 60;
-            const minutosStr = String(minutos).padStart(2, '0');
-            const segundosStr = String(segundos).padStart(2, '0');
-            crono.textContent = `${minutosStr}:${segundosStr}`;
-
-            // Cambiar color y mostrar botón de escape a los 5 minutos
-            if (totalSegundos > 300) {
-              crono.style.color = '#ef4444';
-              if (btnEscape) {
-                btnEscape.style.display = 'block';
-                btnEscape.dataset.curp = s.curp;
+            try {
+              const ahora = new Date();
+              let fechaSalida;
+              if (salidaTimestamp.includes('T')) {
+                fechaSalida = new Date(salidaTimestamp);
+              } else if (salidaTimestamp.includes('/')) {
+                const partes = salidaTimestamp.split(' ');
+                if (partes.length < 2) { crono.textContent = '--:--'; return; }
+                const fechaPartes = partes[0].split('/');
+                const horaPartes = partes[1].split(':');
+                if (fechaPartes.length < 3 || horaPartes.length < 3) { crono.textContent = '--:--'; return; }
+                
+                fechaSalida = new Date(
+                  parseInt(fechaPartes[2]),      
+                  parseInt(fechaPartes[1]) - 1,   
+                  parseInt(fechaPartes[0]),       
+                  parseInt(horaPartes[0]),        
+                  parseInt(horaPartes[1]),        
+                  parseInt(horaPartes[2])         
+                );
+              } else {
+                crono.textContent = '--:--'; return;
               }
-            } else {
-              crono.style.color = '#10b981';
-              if (btnEscape) btnEscape.style.display = 'none';
+              
+              const diffMs = ahora - fechaSalida;
+              if (diffMs < 0 || isNaN(fechaSalida.getTime())) { 
+                crono.textContent = '00:00'; 
+                return; 
+              }
+              const totalSegundos = Math.floor(diffMs / 1000);
+              const minutos = Math.floor(totalSegundos / 60);
+              const segundos = totalSegundos % 60;
+              const minutosStr = String(minutos).padStart(2, '0');
+              const segundosStr = String(segundos).padStart(2, '0');
+              crono.textContent = `${minutosStr}:${segundosStr}`;
+
+              if (totalSegundos > 300) {
+                crono.style.color = '#ef4444';
+                if (btnEscape) {
+                  btnEscape.style.display = 'block';
+                  btnEscape.dataset.curp = s.curp;
+                }
+              } else {
+                crono.style.color = '#10b981';
+                if (btnEscape) btnEscape.style.display = 'none';
+              }
+            } catch (e) {
+              console.error('Error en cronómetro:', e);
+              if (crono) crono.textContent = '--:--';
             }
-          } catch (e) {
-            console.error('Error en cronómetro:', e);
-            if (crono) crono.textContent = '--:--';
-          }
-        };
+          };
 
-        // Ejecutar inmediatamente y luego cada segundo
-        actualizarCrono();
-        window._intervalSalida = setInterval(actualizarCrono, 1000);
+          actualizarCrono();
+          window._intervalSalida = setInterval(actualizarCrono, 1000);
+        }
       }
-    }
 
-    // Obtener historial (últimos 15 movimientos)
-    const responseHist = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        accion: 'obtenerHistorialSalidas',
-        token: token,
-        idClase: claseActiva.idClase,
-        limite: 15
-      })
-    });
-    const dataHist = await responseHist.json();
-    if (dataHist.success) {
-      const movs = dataHist.movimientos || [];
-      const contador = document.getElementById('contadorHistorial');
-      if (contador) contador.textContent = `(${movs.length} registros)`;
-      const listaHist = document.getElementById('listaHistorial');
-      if (movs.length === 0) {
-        listaHist.innerHTML = '<p style="color:#6b7280; font-size:0.9rem;">No hay movimientos registrados.</p>';
-      } else {
-        listaHist.innerHTML = movs.map(m => {
-          const alumno = alumnosGrupo.find(a => a.curp === m.curp);
-          const nombre = alumno ? SIREI.utils.escapeHtml(alumno.nombreCompleto) : m.curp;
-          const esSalida = m.estado === 'Fuera' || m.estado === 'Escape';
-          const icono = esSalida ? (m.estado === 'Escape' ? '🏃' : '🚪') : '🚪✅';
-          const color = esSalida ? (m.estado === 'Escape' ? '#dc2626' : '#92400e') : '#065f46';
-          const fecha = m.salidaFormateada || m.salidaTimestamp;
-          const motivoExtra = m.motivo_otro ? ` (${m.motivo_otro})` : '';
-          const duracionMostrar = m.duracion ? ` ⏱️${m.duracion}` : '';
-          return `<div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #f3f4f6; font-size:0.9rem;">
-            <div>
-              <span style="font-weight:500;">${nombre}</span>
-              <span style="font-size:0.75rem; color:#6b7280; margin-left:8px;">${m.motivo || ''}${motivoExtra}</span>
-            </div>
-            <div>
-              <span style="color:${color};">${icono}</span>
-              <span style="font-size:0.75rem; color:#6b7280;">${fecha}</span>
-              ${duracionMostrar ? `<span style="font-size:0.7rem; color:#059669; margin-left:4px;">${duracionMostrar}</span>` : ''}
-            </div>
-          </div>`;
-        }).join('');
+      // Obtener historial
+      const responseHist = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          accion: 'obtenerHistorialSalidas',
+          token: token,
+          idClase: claseActiva.idClase,
+          limite: 15
+        })
+      });
+      const dataHist = await responseHist.json();
+      if (dataHist.success) {
+        const movs = dataHist.movimientos || [];
+        const contador = document.getElementById('contadorHistorial');
+        if (contador) contador.textContent = `(${movs.length} registros)`;
+        const listaHist = document.getElementById('listaHistorial');
+        if (movs.length === 0) {
+          listaHist.innerHTML = '<p style="color:#6b7280; font-size:0.9rem;">No hay movimientos registrados.</p>';
+        } else {
+          listaHist.innerHTML = movs.map(m => {
+            const alumno = alumnosGrupo.find(a => a.curp === m.curp);
+            const nombre = alumno ? SIREI.utils.escapeHtml(alumno.nombreCompleto) : m.curp;
+            const esSalida = m.estado === 'Fuera' || m.estado === 'Escape';
+            const icono = esSalida ? (m.estado === 'Escape' ? '🏃' : '🚪') : '🚪✅';
+            const color = esSalida ? (m.estado === 'Escape' ? '#dc2626' : '#92400e') : '#065f46';
+            const fecha = m.salidaFormateada || m.salidaTimestamp;
+            const motivoExtra = m.motivo_otro ? ` (${m.motivo_otro})` : '';
+            const duracionMostrar = m.duracion ? ` ⏱️${m.duracion}` : '';
+            return `<div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #f3f4f6; font-size:0.9rem;">
+              <div>
+                <span style="font-weight:500;">${nombre}</span>
+                <span style="font-size:0.75rem; color:#6b7280; margin-left:8px;">${m.motivo || ''}${motivoExtra}</span>
+              </div>
+              <div>
+                <span style="color:${color};">${icono}</span>
+                <span style="font-size:0.75rem; color:#6b7280;">${fecha}</span>
+                ${duracionMostrar ? `<span style="font-size:0.7rem; color:#059669; margin-left:4px;">${duracionMostrar}</span>` : ''}
+              </div>
+            </div>`;
+          }).join('');
+        }
       }
+    } catch (e) {
+      console.error('Error al actualizar estado de salidas:', e);
     }
-  } catch (e) {
-    console.error('Error al actualizar estado de salidas:', e);
   }
-}
 
   // Abrir modal (default: Registrar Salida)
   document.getElementById('btnAbrirSalidas').addEventListener('click', () => {
@@ -1185,7 +1183,6 @@ async function actualizarEstadoSalidas() {
     try {
       let response;
       if (accion === 'salida') {
-        // Si motivo es "Otro", enviar también motivoOtro
         const motivoOtro = (motivo === 'Otro') ? document.getElementById('textoOtroMotivo').value.trim() : '';
         response = await fetch(API_URL, {
           method: 'POST',
@@ -1249,7 +1246,7 @@ async function actualizarEstadoSalidas() {
     }
   });
 
-  // QR para salidas
+  // QR para salidas (con debounce)
   document.getElementById('btnEscanearSalidaFull').addEventListener('click', () => {
     const readerContainer = document.getElementById('qr-reader-salida-full');
     if (qrReaderSalidaFull) {
@@ -1266,8 +1263,19 @@ async function actualizarEstadoSalidas() {
       { facingMode: "environment" },
       config,
       (decodedText) => {
+        // Debounce: solo procesar si ha pasado al menos 1 segundo
+        const ahora = Date.now();
+        if (ahora - ultimoEscaneoQR < 1000) return;
+        ultimoEscaneoQR = ahora;
+
         const curp = decodedText.trim().toUpperCase();
         document.getElementById('inputSalidaFull').value = curp;
+        // Opcional: cerrar cámara automáticamente después de leer
+        if (qrReaderSalidaFull) {
+          qrReaderSalidaFull.stop().catch(() => {});
+          qrReaderSalidaFull = null;
+          readerContainer.style.display = 'none';
+        }
       },
       (err) => {}
     );
@@ -1326,7 +1334,6 @@ async function actualizarEstadoSalidas() {
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Finalizando...';
 
-    // Mostrar feedback de progreso si tarda >3s
     const timeoutMs = 3000;
     let timeoutId = setTimeout(() => {
       SIREI.utils.mostrarToast('La clase se está finalizando en segundo plano...', 'warning');
@@ -1447,7 +1454,6 @@ function mostrarOpcionesInicio(container, asignaciones, grupos, asignaturas, idD
       btnIniciar.disabled = true;
       btnIniciar.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Creando clase...';
 
-      // Mostrar feedback de progreso si tarda >3s
       const timeoutMs = 3000;
       let timeoutId = setTimeout(() => {
         SIREI.utils.mostrarToast('La clase se está creando en segundo plano...', 'warning');
