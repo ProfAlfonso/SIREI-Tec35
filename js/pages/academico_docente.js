@@ -276,9 +276,9 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
         <button id="btnAsignarEvidencia" class="btn btn-success" style="flex:1;">Asignar</button>
       </div>
       <!-- CAMPO DE OBSERVACIONES Y DICTADO (rediseñado para móviles) -->
-      <div style="display:flex; gap:6px; margin-bottom:6px; align-items:flex-start;">
-        <textarea id="observacionesEvidencia" rows="2" placeholder="Observaciones (opcional)..." style="flex:1; padding:8px; border-radius:8px; border:1px solid #d1d5db; resize:vertical; min-height:44px; font-size:16px; width:100%;"></textarea>
-        <button id="btnDictadoEvidenciaObs" class="btn btn-secondary" style="padding:8px 12px; flex-shrink:0; font-size:1.2rem; min-height:44px;" title="Dictar por voz">
+      <div style="position:relative; width:100%; margin-bottom:6px;">
+        <textarea id="observacionesEvidencia" rows="2" placeholder="Observaciones (opcional)..." style="width:100%; padding:10px 44px 10px 10px; border-radius:8px; border:1px solid #d1d5db; resize:vertical; min-height:44px; font-size:16px; box-sizing:border-box;"></textarea>
+        <button id="btnDictadoEvidenciaObs" type="button" style="position:absolute; right:6px; bottom:6px; width:36px; height:36px; padding:0; font-size:1.2rem; border:none; background:transparent; display:flex; align-items:center; justify-content:center; border-radius:50%; cursor:pointer;" title="Dictar por voz">
           🎤
         </button>
       </div>
@@ -379,18 +379,20 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
         if (readerDiv.style.display === 'block') {
           readerDiv.style.display = 'none';
           if (qrReaderEv) { qrReaderEv.stop().catch(() => {}); qrReaderEv = null; }
+          btnEscanear.textContent = 'Escanear QR';
           return;
         }
         readerDiv.style.display = 'block';
         readerDiv.innerHTML = '';
+        btnEscanear.textContent = '❌ Cerrar cámara';
         qrReaderEv = new Html5Qrcode("qr-evidence-reader");
         qrReaderEv.start(
           { facingMode: "environment" },
           { fps: 10, qrbox: 250 },
           async (decodedText) => {
-            // Debounce: solo procesar si ha pasado al menos 1 segundo
+            // Debounce: solo procesar si ha pasado al menos 2 segundos
             const ahora = Date.now();
-            if (ahora - ultimoEscaneoEv < 1000) return;
+            if (ahora - ultimoEscaneoEv < 2000) return;
             ultimoEscaneoEv = ahora;
 
             const curp = decodedText.trim().toUpperCase();
@@ -410,6 +412,7 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
             }
             if (qrReaderEv) { qrReaderEv.stop().catch(() => {}); qrReaderEv = null; }
             readerDiv.style.display = 'none';
+            btnEscanear.textContent = 'Escanear QR';
             mostrarDetalleEvidencia(ev);
           },
           () => {}
