@@ -1,6 +1,11 @@
 // ============================================================
 //  actitudes_docente.js - Asignación de actitudes (Docente)
-//  Versión 2.0 - CON DEPURACIÓN Y CORRECCIÓN DE CARGA
+//  Versión 2.1 - CORREGIDA:
+//    - El campo de observaciones ahora ocupa todo el ancho en móviles.
+//    - El botón de dictado por voz se ha rediseñado para que no estorbe
+//      (se muestra como un botón pequeño al lado del textarea, con icono de micrófono).
+//    - El textarea tiene un tamaño mínimo adecuado para ser visible en pantallas pequeñas.
+//    - Se agregó debounce al lector QR (1 segundo entre lecturas).
 // ============================================================
 
 window.cargarActitudesDocente = async function(container, idDocente, idGrupo, idAsignatura, periodo, token, idSubgrupo) {
@@ -96,9 +101,12 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
         <div style="background:white; border-radius:8px; padding:16px; margin-bottom:16px; box-shadow:0 1px 3px rgba(0,0,0,0.1);">
           <div style="margin-bottom:12px;">
             <label style="font-weight:600;">Observaciones (opcional)</label>
-            <div style="display:flex; gap:8px; align-items:center;">
-              <textarea id="observacionesInput" rows="2" style="flex:1; padding:10px; border-radius:8px; border:1px solid #d1d5db; resize:vertical;"></textarea>
-              <button id="btnDictar" class="btn btn-secondary" style="padding:10px 14px;">🎤 Dictar</button>
+            <!-- CAMPO DE OBSERVACIONES Y DICTADO (rediseñado para móviles) -->
+            <div style="display:flex; gap:6px; align-items:flex-start;">
+              <textarea id="observacionesInput" rows="2" style="flex:1; padding:10px; border-radius:8px; border:1px solid #d1d5db; resize:vertical; min-height:44px; font-size:16px; width:100%;"></textarea>
+              <button id="btnDictar" class="btn btn-secondary" style="padding:8px 12px; flex-shrink:0; font-size:1.2rem; min-height:44px;" title="Dictar por voz">
+                🎤
+              </button>
             </div>
           </div>
 
@@ -137,7 +145,6 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
 
       // === LLENAR SELECT DE ACTITUDES ===
       const select = document.getElementById('selectActitud');
-      // Limpiar opciones existentes (excepto la primera)
       select.innerHTML = '<option value="">-- Elige una actitud --</option>';
 
       if (actitudesDisponibles.length === 0) {
@@ -147,7 +154,6 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
         option.textContent = '-- No hay actitudes para alumnos --';
         select.appendChild(option);
         select.disabled = true;
-        // Mostrar mensaje de advertencia
         const resumenDiv = document.getElementById('resumenActitud');
         resumenDiv.style.display = 'block';
         resumenDiv.innerHTML = `
@@ -224,8 +230,9 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
         if (e.key === 'Enter') asignarActitud();
       });
 
-      // Botón QR
+      // Botón QR (con debounce)
       let qrReader = null;
+      let ultimoEscaneoQR = 0;
       document.getElementById('btnEscanearQR').addEventListener('click', () => {
         const readerContainer = document.getElementById('qr-reader-actitud');
         if (qrReader) {
@@ -242,6 +249,11 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
           { facingMode: "environment" },
           config,
           async (decodedText) => {
+            // Debounce: solo procesar si ha pasado al menos 1 segundo
+            const ahora = Date.now();
+            if (ahora - ultimoEscaneoQR < 1000) return;
+            ultimoEscaneoQR = ahora;
+
             const curp = decodedText.trim().toUpperCase();
             const alumno = alumnosGrupo.find(a => a.curp === curp);
             if (!alumno) {
@@ -258,7 +270,7 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
         );
       });
 
-      // Botón dictar (Speech Recognition)
+      // Botón dictar (Speech Recognition) - CORREGIDO
       document.getElementById('btnDictar').addEventListener('click', () => {
         if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
           SIREI.utils.mostrarToast('Tu navegador no soporta dictado por voz.', 'error');
@@ -266,15 +278,39 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
         }
         const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
         recognition.lang = 'es-ES';
-        recognition.start();
+        recognition.continuous = false;
+        recognition.interimResults = false;
+        const textarea = document.getElementById('observacionesInput');
+        const btnDictar = document.getElementById('btnDictar');
+        // Feedback visual: cambiar el botón mientras escucha
+        btnDictar.textContent = '⏳';
+        btnDictar.style.background = '#f59e0b';
         recognition.onresult = (event) => {
           const texto = event.results[0][0].transcript;
-          const textarea = document.getElementById('observacionesInput');
           textarea.value += (textarea.value ? ' ' : '') + texto;
+          // Ajustar altura automáticamente
+          textarea.style.height = 'auto';
+          textarea.style.height = textarea.scrollHeight + 'px';
         };
-        recognition.onerror = () => {
-          SIREI.utils.mostrarToast('Error al reconocer voz, intenta de nuevo.', 'error');
+        recognition.onerror = (err) => {
+          if (err.error === 'not-allowed') {
+            SIREI.utils.mostrarToast('Permiso de micrófono denegado.', 'error');
+          } else {
+            SIREI.utils.mostrarToast('Error al reconocer voz, intenta de nuevo.', 'error');
+          }
+          btnDictar.textContent = '🎤';
+          btnDictar.style.background = '';
         };
+        recognition.onend = () => {
+          btnDictar.textContent = '🎤';
+          btnDictar.style.background = '';
+        };
+        recognition.start();
+        // Timeout de seguridad para restaurar el botón si no termina
+        setTimeout(() => {
+          btnDictar.textContent = '🎤';
+          btnDictar.style.background = '';
+        }, 10000);
       });
 
     } catch (error) {
