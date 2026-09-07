@@ -102,9 +102,9 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
           <div style="margin-bottom:12px;">
             <label style="font-weight:600;">Observaciones (opcional)</label>
             <!-- CAMPO DE OBSERVACIONES Y DICTADO (rediseñado para móviles) -->
-            <div style="display:flex; gap:6px; align-items:flex-start;">
-              <textarea id="observacionesInput" rows="2" style="flex:1; padding:10px; border-radius:8px; border:1px solid #d1d5db; resize:vertical; min-height:44px; font-size:16px; width:100%;"></textarea>
-              <button id="btnDictar" class="btn btn-secondary" style="padding:8px 12px; flex-shrink:0; font-size:1.2rem; min-height:44px;" title="Dictar por voz">
+            <div style="position:relative; width:100%;">
+              <textarea id="observacionesInput" rows="2" style="width:100%; padding:10px 44px 10px 10px; border-radius:8px; border:1px solid #d1d5db; resize:vertical; min-height:44px; font-size:16px; box-sizing:border-box;"></textarea>
+              <button id="btnDictar" type="button" style="position:absolute; right:6px; bottom:6px; width:36px; height:36px; padding:0; font-size:1.2rem; border:none; background:transparent; display:flex; align-items:center; justify-content:center; border-radius:50%; cursor:pointer;" title="Dictar por voz">
                 🎤
               </button>
             </div>
@@ -235,12 +235,15 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
       let ultimoEscaneoQR = 0;
       document.getElementById('btnEscanearQR').addEventListener('click', () => {
         const readerContainer = document.getElementById('qr-reader-actitud');
+        const btnEscanear = document.getElementById('btnEscanearQR');
         if (qrReader) {
           qrReader.stop().catch(() => {});
           qrReader = null;
           readerContainer.style.display = 'none';
+          btnEscanear.textContent = '📷 QR';
           return;
         }
+        btnEscanear.textContent = '❌ Cerrar cámara';
         readerContainer.style.display = 'block';
         readerContainer.innerHTML = '';
         qrReader = new Html5Qrcode("qr-reader-actitud");
@@ -249,9 +252,9 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
           { facingMode: "environment" },
           config,
           async (decodedText) => {
-            // Debounce: solo procesar si ha pasado al menos 1 segundo
+            // Debounce: solo procesar si ha pasado al menos 2 segundos
             const ahora = Date.now();
-            if (ahora - ultimoEscaneoQR < 1000) return;
+            if (ahora - ultimoEscaneoQR < 2000) return;
             ultimoEscaneoQR = ahora;
 
             const curp = decodedText.trim().toUpperCase();
@@ -265,6 +268,7 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
             qrReader.stop().catch(() => {});
             qrReader = null;
             readerContainer.style.display = 'none';
+            document.getElementById('btnEscanearQR').textContent = '📷 QR';
           },
           (err) => {}
         );
