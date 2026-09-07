@@ -1005,3 +1005,69 @@ input:focus {
     flex: 1 1 calc(33% - 8px);
   }
 }
+
+/* ============================================================
+   MEJORA: Modal de Salidas en móvil (scroll y layout)
+   ============================================================ */
+
+/* Asegura que el modal ocupe toda la pantalla en móvil */
+@media (max-width: 768px) {
+  .modal-salidas-full {
+    align-items: stretch !important;
+    padding: 0 !important;
+  }
+  .modal-salidas-full > div {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: 100vh !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+  }
+  /* El contenido del modal debe scroll */
+  .modal-salidas-full > div > div:last-child {
+    flex: 1 !important;
+    overflow-y: auto !important;
+    padding-bottom: 20px !important;
+  }
+  /* Botones de acción en columna en móvil */
+  .modal-salidas-full .btn-salida,
+  .modal-salidas-full .btn-entrada {
+    font-size: 1rem !important;
+    padding: 14px !important;
+  }
+  /* Grid de motivos en una sola columna en móvil */
+  .modal-salidas-full .boton-motivo {
+    grid-column: span 1 !important;
+    font-size: 1rem !important;
+    padding: 12px !important;
+  }
+  .modal-salidas-full .boton-motivo.otro {
+    grid-column: span 1 !important;
+  }
+  .modal-salidas-full #seccion-motivo > div {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px !important;
+  }
+  /* Ajuste del input de alumno */
+  .modal-salidas-full #inputSalidaFull {
+    font-size: 16px !important; /* Evita zoom en iOS */
+  }
+  /* Botón de confirmar más grande y visible */
+  .modal-salidas-full .btn-confirmar {
+    font-size: 1.1rem !important;
+    padding: 16px !important;
+  }
+}
+
+/* Para pantallas muy pequeñas (≤ 400px) */
+@media (max-width: 400px) {
+  .modal-salidas-full #seccion-motivo > div {
+    grid-template-columns: 1fr !important;
+  }
+  .modal-salidas-full .boton-motivo {
+    font-size: 0.9rem !important;
+    padding: 10px !important;
+  }
+}
