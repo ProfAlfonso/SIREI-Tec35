@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="description" content="SIREI - Panel del Docente">
+  <title>SIREI · Panel del Docente</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><path d='M50 10 L90 30 L50 50 L10 30 Z' fill='%231E3A8A'/><path d='M90 35 L90 70 L50 90 L50 55 Z' fill='%233B82F6'/><path d='M10 35 L10 70 L50 90 L50 55 Z' fill='%2360A5FA'/></svg>">
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+Pro:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+  <link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Overlay for mobile sidebar -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <!-- Barra lateral izquierda (Sidebar) -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="sirei-titulo">
+          <h2>SIREI <span class="badge-version">Docente</span></h2>
+          <p class="siglas-desc">Sistema de Retroalimentación Educativa Inmediata</p>
+        </div>
+      </div>
+      <nav class="sidebar-nav">
+        <a href="#" class="nav-item active" data-tab="inicio">
+          <i class="bi bi-house" style="color: #60A5FA;"></i> Mi Clase
+        </a>
+        <a href="#" class="nav-item" data-tab="resultados">
+          <i class="bi bi-bar-chart-line" style="color: #FBBF24;"></i> Resultados
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <button id="logoutBtn" class="btn-logout"><i class="bi bi-box-arrow-right"></i> Cerrar sesión</button>
+      </div>
+    </aside>
+
+    <!-- Área de contenido principal -->
+    <main class="main-content">
+      <!-- Barra superior con logo y usuario -->
+      <header class="top-bar">
+        <button class="menu-toggle" id="menuToggle">☰</button>
+        <div class="logo-escuela-header" id="headerLogo">
+          <!-- Aquí se cargará el logo de la escuela (más grande) -->
+        </div>
+        <div class="user-info">
+          <div class="user-avatar">
+            <i class="bi bi-person-circle"></i>
+          </div>
+          <div class="user-details">
+            <span class="user-name" id="userName">Cargando...</span>
+            <span class="user-role" id="userRole">Docente</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- Contenedor dinámico para el contenido -->
+      <div id="tabContent" class="tab-content-container"></div>
+    </main>
+  </div>
+
+  <!-- Definir la URL del API del coordinador -->
+  <script src="js/config.js"></script>
+  <script>
+    const API_URL = SIREI_CONFIG.COORDINADOR_API_URL;
+  </script>
+  <!-- Cargar librerías -->
+  <script src="js/sirei.js"></script>
+  <!-- Cargar lógica del docente (ubicado en js/pages/docente.js) -->
+  <script src="js/pages/docente.js"></script>
+
+<!-- Librería para escanear QR desde la cámara -->
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+
+</body>
+</html>

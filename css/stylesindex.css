@@ -1,0 +1,261 @@
+/* Reset básico */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  /* Fondo con patrón geométrico sutil y colores premium */
+  background-color: #0F172A;
+  background-image: radial-gradient(#1E293B 1px, transparent 1px);
+  background-size: 24px 24px;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.container {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  perspective: 1000px;
+}
+
+/* Animaciones */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.fade-in-up {
+  animation: fadeInUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Tarjeta de login */
+.login-card {
+  background: #ffffff;
+  border-radius: 16px;
+  border: 1px solid #E2E8F0;
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.4), 
+              0 0 0 4px rgba(194, 166, 113, 0.1);
+  width: 100%;
+  max-width: 420px;
+  padding: 48px 40px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Detalle superior en la tarjeta */
+.login-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 6px;
+  background: linear-gradient(90deg, #1E293B, #C2A671, #1E293B);
+}
+
+/* Logo e icono */
+.logo-area {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.icono-escudo {
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: center;
+}
+
+h1 {
+  font-family: 'Source Serif 4', serif;
+  font-weight: 700;
+  font-size: 2.4rem;
+  color: #1E293B;
+  margin-bottom: 6px;
+  letter-spacing: -0.5px;
+}
+
+.subtitulo {
+  font-weight: 400;
+  font-size: 0.9rem;
+  color: #64748B;
+  max-width: 280px;
+  margin: 0 auto;
+  line-height: 1.5;
+}
+
+/* Campos del formulario */
+.input-group {
+  margin-bottom: 20px;
+  text-align: left;
+}
+
+label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 8px;
+}
+
+input[type="text"],
+input[type="password"] {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1.5px solid #CBD5E1;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-family: 'Inter', sans-serif;
+  color: #1E293B;
+  transition: all 0.2s ease;
+  outline: none;
+  background: #F8FAFC;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus {
+  border-color: #C2A671;
+  background: #FFFFFF;
+  box-shadow: 0 0 0 3px rgba(194, 166, 113, 0.15);
+}
+
+/* Toggle Password */
+.password-wrapper {
+  position: relative;
+}
+
+.btn-toggle-password {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  padding: 0;
+  color: #94A3B8;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  box-shadow: none;
+}
+
+.btn-toggle-password:hover {
+  color: #475569;
+  background: none;
+  box-shadow: none;
+  transform: translateY(-50%);
+}
+
+/* Captcha */
+.captcha-group {
+  margin-bottom: 28px;
+  background: #F1F5F9;
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px dashed #CBD5E1;
+}
+
+.captcha-group label {
+  margin-bottom: 8px;
+  color: #475569;
+}
+
+.captcha-group input {
+  text-align: center;
+  font-weight: 600;
+  letter-spacing: 2px;
+}
+
+#captchaQuestion {
+  font-weight: 700;
+  color: #0F172A;
+  font-size: 1rem;
+}
+
+/* Botón principal */
+button[type="submit"] {
+  width: 100%;
+  background: #1E293B;
+  color: #FFFFFF;
+  border: none;
+  padding: 14px;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  font-family: 'Inter', sans-serif;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+}
+
+button[type="submit"]:hover:not(:disabled) {
+  background: #0F172A;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.2);
+}
+
+button[type="submit"]:disabled {
+  background: #94A3B8;
+  cursor: not-allowed;
+}
+
+/* Spinner */
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  border-top-color: #FFFFFF;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Mensaje de error */
+.mensaje-error {
+  margin-top: 20px;
+  text-align: center;
+  font-size: 0.85rem;
+  color: #991B1B;
+  background: #FEF2F2;
+  border: 1px solid #FCA5A5;
+  padding: 12px;
+  border-radius: 8px;
+  display: none;
+  font-weight: 500;
+  animation: shake 0.4s ease;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+
+/* Responsive para móviles */
+@media (max-width: 480px) {
+  .login-card {
+    padding: 32px 24px;
+  }
+  h1 {
+    font-size: 2rem;
+  }
+}
