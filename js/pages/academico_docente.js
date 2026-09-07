@@ -1,6 +1,11 @@
 // ============================================================
 //  academico_docente.js - Módulo Académico (Docente)
 //  Gestión de evidencias y entregas
+//  Versión 2.1 - CORREGIDA:
+//    - El campo de texto para observaciones ahora ocupa todo el ancho en móviles.
+//    - El botón de dictado por voz se ha rediseñado para que no estorbe
+//      (se muestra como un botón pequeño al lado del textarea, con icono de micrófono).
+//    - El textarea tiene un tamaño mínimo adecuado para ser visible en pantallas pequeñas.
 // ============================================================
 
 window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, idAsignatura, periodo, token, idSubgrupo) {
@@ -166,7 +171,6 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
     // Clic en una evidencia para seleccionarla
     document.querySelectorAll('.evidencia-item').forEach(item => {
       item.addEventListener('click', function(e) {
-        // Si se hizo clic en el botón eliminar, no seleccionar
         if (e.target.classList.contains('btn-eliminar-evidencia')) return;
         const id = parseInt(this.dataset.id);
         const ev = evidencias.find(e => e.id === id);
@@ -271,9 +275,12 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
         </datalist>
         <button id="btnAsignarEvidencia" class="btn btn-success" style="flex:1;">Asignar</button>
       </div>
-      <div style="display:flex; gap:6px; margin-bottom:6px;">
-        <textarea id="observacionesEvidencia" rows="2" placeholder="Observaciones (opcional)..." style="flex:3; padding:8px; border-radius:8px; border:1px solid #d1d5db; resize:vertical;"></textarea>
-        <button id="btnDictadoEvidenciaObs" class="btn btn-secondary" style="flex:1;">Dictar</button>
+      <!-- CAMPO DE OBSERVACIONES Y DICTADO (rediseñado para móviles) -->
+      <div style="display:flex; gap:6px; margin-bottom:6px; align-items:flex-start;">
+        <textarea id="observacionesEvidencia" rows="2" placeholder="Observaciones (opcional)..." style="flex:1; padding:8px; border-radius:8px; border:1px solid #d1d5db; resize:vertical; min-height:44px; font-size:16px; width:100%;"></textarea>
+        <button id="btnDictadoEvidenciaObs" class="btn btn-secondary" style="padding:8px 12px; flex-shrink:0; font-size:1.2rem; min-height:44px;" title="Dictar por voz">
+          🎤
+        </button>
       </div>
       ${qrSection}
       <div id="resultadoIndividualEvidencia" style="margin:6px 0; font-size:0.9rem;"></div>
@@ -362,9 +369,11 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
       mostrarDetalleEvidencia(ev);
     });
 
+    // --- QR para evidencia (con debounce) ---
     const btnEscanear = document.getElementById('btnEscanearEvidencia');
     if (btnEscanear) {
       let qrReaderEv = null;
+      let ultimoEscaneoEv = 0;
       btnEscanear.addEventListener('click', () => {
         const readerDiv = document.getElementById('qr-evidence-reader');
         if (readerDiv.style.display === 'block') {
@@ -379,6 +388,11 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
           { facingMode: "environment" },
           { fps: 10, qrbox: 250 },
           async (decodedText) => {
+            // Debounce: solo procesar si ha pasado al menos 1 segundo
+            const ahora = Date.now();
+            if (ahora - ultimoEscaneoEv < 1000) return;
+            ultimoEscaneoEv = ahora;
+
             const curp = decodedText.trim().toUpperCase();
             const alumno = alumnosGrupo.find(a => a.curp === curp);
             if (!alumno) {
@@ -403,26 +417,53 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
       });
     }
 
+    // --- DICTADO POR VOZ (corregido) ---
     const btnDictado = document.getElementById('btnDictadoEvidenciaObs');
     if (btnDictado) {
       btnDictado.addEventListener('click', () => {
         if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-          SIREI.utils.mostrarToast('Dictado no soportado.', 'error');
+          SIREI.utils.mostrarToast('Dictado no soportado en este navegador.', 'error');
           return;
         }
         const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
         const recognizer = new SR();
         recognizer.lang = 'es-MX';
         recognizer.interimResults = false;
+        recognizer.continuous = false;
         recognizer.onresult = (event) => {
           const texto = event.results[0][0].transcript;
-          obsTextarea.value += (obsTextarea.value ? ' ' : '') + texto;
+          if (obsTextarea) {
+            obsTextarea.value += (obsTextarea.value ? ' ' : '') + texto;
+            // Ajustar altura automáticamente
+            obsTextarea.style.height = 'auto';
+            obsTextarea.style.height = obsTextarea.scrollHeight + 'px';
+          }
         };
-        recognizer.onerror = () => SIREI.utils.mostrarToast('Error de dictado.', 'error');
+        recognizer.onerror = (err) => {
+          if (err.error === 'not-allowed') {
+            SIREI.utils.mostrarToast('Permiso de micrófono denegado.', 'error');
+          } else {
+            SIREI.utils.mostrarToast('Error al dictar. Intenta de nuevo.', 'error');
+          }
+        };
+        recognizer.onend = () => {
+          // Opcional: feedback de que terminó
+        };
         recognizer.start();
+        // Feedback visual: cambiar el botón mientras escucha
+        btnDictado.textContent = '⏳';
+        btnDictado.style.background = '#f59e0b';
+        setTimeout(() => {
+          btnDictado.textContent = '🎤';
+          btnDictado.style.background = '';
+        }, 5000); // si no termina, se restaura
+        // También restaurar cuando termine el reconocimiento
+        recognizer.onend = () => {
+          btnDictado.textContent = '🎤';
+          btnDictado.style.background = '';
+        };
       });
     }
-
 
     async function guardarEntregaIndividual(curpAlumno, calificacion, escala, evidencia, observaciones) {
       try {
@@ -548,11 +589,9 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
       const calificacionNumerica = document.getElementById('checkCalificacion').checked;
       const escalaSuficiencia = document.getElementById('checkEscala').checked;
       
-      // Ya no se exige al menos un tipo de calificación
       const instrumento = document.getElementById('instrumentoEvaluacion').value.trim();
       let fechaMaxima = document.getElementById('fechaMaximaEntrega').value;
       
-      // Validar que la fecha no sea pasada (si se ingresó)
       if (fechaMaxima) {
         const fechaSeleccionada = new Date(fechaMaxima);
         const ahora = new Date();
@@ -560,7 +599,6 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
           SIREI.utils.mostrarToast('La fecha máxima no puede ser anterior a la fecha actual.', 'error');
           return;
         }
-        // Convertir a formato dd/MM/yyyy HH:mm:ss para el backend
         const dia = String(fechaSeleccionada.getDate()).padStart(2, '0');
         const mes = String(fechaSeleccionada.getMonth() + 1).padStart(2, '0');
         const año = fechaSeleccionada.getFullYear();
@@ -568,7 +606,7 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
         const minutos = String(fechaSeleccionada.getMinutes()).padStart(2, '0');
         fechaMaxima = `${dia}/${mes}/${año} ${horas}:${minutos}:00`;
       } else {
-        fechaMaxima = ''; // vacío si no se especificó
+        fechaMaxima = '';
       }
 
       const submitBtn = e.target.querySelector('button[type="submit"]');
@@ -601,7 +639,7 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
           await renderizar();
         } else {
           console.error("❌ Respuesta del servidor:", result);
-SIREI.utils.mostrarToast(result.message || 'Error al crear (sin mensaje específico)', 'error');
+          SIREI.utils.mostrarToast(result.message || 'Error al crear (sin mensaje específico)', 'error');
           submitBtn.disabled = false;
           submitBtn.textContent = 'Crear evidencia';
         }
