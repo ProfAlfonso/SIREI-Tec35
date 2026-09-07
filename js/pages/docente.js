@@ -564,6 +564,11 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
   let qrReaderAsistencia = null;
   let qrReaderSalidaFull = null;
   let escaneoActivo = false;
+  // Variable para controlar el escaneo (debounce)
+let ultimoEscaneo = 0;
+let qrReaderAsistencia = null;
+let qrReaderSalidaFull = null;
+let escaneoActivo = false;
 
   // ---- Función para actualizar contadores ----
   function actualizarContadores() {
