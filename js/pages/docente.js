@@ -314,13 +314,14 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
 
     <!-- Modal de Salidas (REDISEÑADO para móviles) -->
     <div class="modal-salidas-full" id="modalSalidasFull">
-      <!-- Cabecera -->
-      <div style="display:flex; justify-content:space-between; align-items:center; padding:16px 20px; background:#f8fafc; border-bottom:2px solid #e5e7eb; flex-shrink:0;">
-        <h2 style="margin:0; font-size:1.3rem; display:flex; align-items:center; gap:10px;">
-          <span style="font-size:1.8rem;">🚪</span> Entradas / Salidas
-        </h2>
-        <button id="btnCerrarSalidasFull" style="background:none; border:none; font-size:2rem; cursor:pointer; padding:0 10px;">✕</button>
-      </div>
+      <div style="display:flex; flex-direction:column; width:100%; height:100%; background:transparent; padding:0;">
+      <!-- Cabecera (compacta para móviles) -->
+<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 12px; background:#f8fafc; border-bottom:1px solid #e5e7eb; flex-shrink:0; min-height:40px;">
+  <h2 style="margin:0; font-size:0.95rem; display:flex; align-items:center; gap:6px;">
+    <span style="font-size:1.2rem;">🚪</span> Entradas / Salidas
+  </h2>
+  <button id="btnCerrarSalidasFull" style="background:none; border:none; font-size:1.3rem; cursor:pointer; padding:0 6px;">✕</button>
+</div>
 
       <!-- Contenido del modal (scrollable) -->
       <div style="padding:16px 20px; flex:1; overflow-y:auto;">
@@ -397,8 +398,7 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
           <div id="listaHistorial" style="max-height:200px; overflow-y:auto;">
             <p style="color:#6b7280; font-size:0.9rem;">Cargando historial...</p>
           </div>
-        </div>
-
+      </div>
       </div>
     </div>
   `;
@@ -660,13 +660,16 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
 
   document.getElementById('btnAbrirCamara').addEventListener('click', () => {
     const readerContainer = document.getElementById('qr-reader-asistencia');
+    const btnCam = document.getElementById('btnAbrirCamara');
     if (qrReaderAsistencia) {
       qrReaderAsistencia.stop().catch(() => {});
       qrReaderAsistencia = null;
       readerContainer.style.display = 'none';
       escaneoActivo = false;
+      btnCam.textContent = '📷 Abrir cámara';
       return;
     }
+    btnCam.textContent = '❌ Cerrar cámara';
     readerContainer.style.display = 'block';
     readerContainer.innerHTML = '';
     qrReaderAsistencia = new Html5Qrcode("qr-reader-asistencia");
@@ -675,9 +678,9 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
       { facingMode: "environment" },
       config,
       async (decodedText) => {
-        // Debounce: solo procesar si ha pasado al menos 1 segundo desde el último escaneo
+        // Debounce: solo procesar si ha pasado al menos 2 segundos desde el último escaneo
         const ahora = Date.now();
-        if (ahora - ultimoEscaneoQR < 1000) return;
+        if (ahora - ultimoEscaneoQR < 2000) return;
         ultimoEscaneoQR = ahora;
 
         const curp = decodedText.trim().toUpperCase();
@@ -725,6 +728,7 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     if (qrReaderAsistencia) {
       qrReaderAsistencia.stop().catch(() => {});
       qrReaderAsistencia = null;
+      document.getElementById('btnAbrirCamara').textContent = '📷 Abrir cámara';
     }
     document.getElementById('qr-reader-asistencia').style.display = 'none';
     escaneoActivo = false;
@@ -780,6 +784,7 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     if (qrReaderAsistencia) {
       qrReaderAsistencia.stop().catch(() => {});
       qrReaderAsistencia = null;
+      document.getElementById('btnAbrirCamara').textContent = '📷 Abrir cámara';
     }
     document.getElementById('qr-reader-asistencia').style.display = 'none';
     escaneoActivo = false;
@@ -1072,6 +1077,7 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
       qrReaderSalidaFull.stop().catch(() => {});
       qrReaderSalidaFull = null;
       document.getElementById('qr-reader-salida-full').style.display = 'none';
+      document.getElementById('btnEscanearSalidaFull').textContent = '📷 QR';
     }
     document.getElementById('inputSalidaFull').focus();
   });
@@ -1082,6 +1088,7 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     if (qrReaderSalidaFull) {
       qrReaderSalidaFull.stop().catch(() => {});
       qrReaderSalidaFull = null;
+      document.getElementById('btnEscanearSalidaFull').textContent = '📷 QR';
     }
   });
 
@@ -1092,6 +1099,7 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
       if (qrReaderSalidaFull) {
         qrReaderSalidaFull.stop().catch(() => {});
         qrReaderSalidaFull = null;
+        document.getElementById('btnEscanearSalidaFull').textContent = '📷 QR';
       }
     }
   });
@@ -1231,6 +1239,7 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
           qrReaderSalidaFull.stop().catch(() => {});
           qrReaderSalidaFull = null;
           document.getElementById('qr-reader-salida-full').style.display = 'none';
+          document.getElementById('btnEscanearSalidaFull').textContent = '📷 QR';
         }
         
         if (navigator.vibrate) navigator.vibrate(50);
@@ -1249,12 +1258,15 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
   // QR para salidas (con debounce)
   document.getElementById('btnEscanearSalidaFull').addEventListener('click', () => {
     const readerContainer = document.getElementById('qr-reader-salida-full');
+    const btn = document.getElementById('btnEscanearSalidaFull');
     if (qrReaderSalidaFull) {
       qrReaderSalidaFull.stop().catch(() => {});
       qrReaderSalidaFull = null;
       readerContainer.style.display = 'none';
+      btn.textContent = '📷 QR';
       return;
     }
+    btn.textContent = '❌ Cerrar cámara';
     readerContainer.style.display = 'block';
     readerContainer.innerHTML = '';
     qrReaderSalidaFull = new Html5Qrcode("qr-reader-salida-full");
@@ -1263,9 +1275,9 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
       { facingMode: "environment" },
       config,
       (decodedText) => {
-        // Debounce: solo procesar si ha pasado al menos 1 segundo
+        // Debounce: solo procesar si ha pasado al menos 2 segundos
         const ahora = Date.now();
-        if (ahora - ultimoEscaneoQR < 1000) return;
+        if (ahora - ultimoEscaneoQR < 2000) return;
         ultimoEscaneoQR = ahora;
 
         const curp = decodedText.trim().toUpperCase();
@@ -1275,6 +1287,7 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
           qrReaderSalidaFull.stop().catch(() => {});
           qrReaderSalidaFull = null;
           readerContainer.style.display = 'none';
+          document.getElementById('btnEscanearSalidaFull').textContent = '📷 QR';
         }
       },
       (err) => {}
