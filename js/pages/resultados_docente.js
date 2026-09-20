@@ -223,6 +223,7 @@ window.cargarResultadosDocente = async function(container) {
     let asignaturaSeleccionada = null;
     let aspectoSeleccionado = 'asistencias';
     let datos = null;
+    let alumnoSeleccionado = null;
 
     const resultadosContainerId = 'resultadosContenido';
 
@@ -254,7 +255,8 @@ window.cargarResultadosDocente = async function(container) {
         { id: 'asistencias', icono: '📋', nombre: 'Asistencias' },
         { id: 'actitudinal', icono: '😊', nombre: 'Actitudinal' },
         { id: 'academico', icono: '📚', nombre: 'Académico' },
-        { id: 'calificaciones', icono: '🎯', nombre: 'Calificaciones finales' }
+        { id: 'calificaciones', icono: '🎯', nombre: 'Calificaciones finales' },
+        { id: 'tops', icono: '🏆', nombre: 'Tops / Podium' }
       ];
       const botonesAspecto = aspectos.map(a =>
         `<button type="button" class="btn-aspecto ${a.id === aspectoSeleccionado ? 'activo' : ''}" data-aspecto="${a.id}">${a.icono} ${a.nombre}</button>`
@@ -294,9 +296,15 @@ window.cargarResultadosDocente = async function(container) {
                   ${opcionesAsignatura}
                 </select>
               </div>
+              <div>
+                <label style="font-weight:500;">Alumno:</label>
+                <select id="selectAlumnoResult" style="width:100%; padding:10px; border-radius:8px; border:1px solid #d1d5db; margin-top:4px;">
+                  <option value="">Todos los alumnos</option>
+                </select>
+              </div>
             </div>
 
-            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+            <div id="aspectosButtons" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
               ${botonesAspecto}
             </div>
 
@@ -337,11 +345,22 @@ window.cargarResultadosDocente = async function(container) {
         await cargarDatos(true);
       });
 
+      // Selector de alumno individual
+      document.getElementById('selectAlumnoResult').addEventListener('change', async () => {
+        const val = document.getElementById('selectAlumnoResult').value;
+        alumnoSeleccionado = val ? val : null;
+        await renderAspecto();
+      });
+
       document.querySelectorAll('.btn-aspecto').forEach(btn => {
         btn.addEventListener('click', async () => {
           aspectoSeleccionado = btn.dataset.aspecto;
           document.querySelectorAll('.btn-aspecto').forEach(b => b.classList.toggle('activo', b === btn));
-          await renderAspecto();
+          if (aspectoSeleccionado === 'tops') {
+            await renderTops();
+          } else {
+            await renderAspecto();
+          }
         });
       });
 
@@ -365,6 +384,15 @@ window.cargarResultadosDocente = async function(container) {
       }
     }
 
+    // ---- Llena el selector de alumno con los alumnos del grupo cargado ----
+    function poblarSelectorAlumnos() {
+      const sel = document.getElementById('selectAlumnoResult');
+      if (!sel) return;
+      const alumnos = (datos && datos.alumnos) || [];
+      sel.innerHTML = '<option value="">Todos los alumnos</option>' +
+        alumnos.map(a => `<option value="${escapeAttr(a.curp)}" ${alumnoSeleccionado === a.curp ? 'selected' : ''}>${escapeAttr(a.nombreCompleto)}</option>`).join('');
+    }
+
     // ---- Cargar datos consolidados ----
     async function cargarDatos(forzar) {
       const tablaDiv = document.getElementById(resultadosContainerId);
@@ -372,6 +400,9 @@ window.cargarResultadosDocente = async function(container) {
       if (!grupoSeleccionado || !asignaturaSeleccionada || !periodoSeleccionado) {
         tablaDiv.innerHTML = '<p style="color:#6b7280;">Selecciona grupo y asignatura para continuar.</p>';
         return;
+      }
+      if (forzar) {
+        alumnoSeleccionado = null;
       }
       if (datos && !forzar) {
         await renderAspecto();
@@ -389,6 +420,7 @@ window.cargarResultadosDocente = async function(container) {
         });
         if (res.success) {
           datos = res;
+          poblarSelectorAlumnos();
           await renderAspecto();
         } else {
           tablaDiv.innerHTML = '<div class="error">' + escapeAttr(res.message || 'Error al obtener resultados.') + '</div>';
@@ -404,6 +436,14 @@ window.cargarResultadosDocente = async function(container) {
       const tablaDiv = document.getElementById(resultadosContainerId);
       if (!tablaDiv) return;
       if (!datos) { tablaDiv.innerHTML = '<p style="color:#6b7280;">Cargando...</p>'; return; }
+
+      // Si hay un alumno seleccionado, mostrar su vista individual
+      const aspectosButtons = document.getElementById('aspectosButtons');
+      if (alumnoSeleccionado) {
+        if (aspectosButtons) aspectosButtons.style.display = 'none';
+        return renderAlumnoIndividual(alumnoSeleccionado);
+      }
+      if (aspectosButtons) aspectosButtons.style.display = 'flex';
 
       if (aspectoSeleccionado === 'asistencias') return renderAsistencias();
       if (aspectoSeleccionado === 'actitudinal') return renderActitudinal();
@@ -466,16 +506,33 @@ window.cargarResultadosDocente = async function(container) {
 
       const simbolo = function(estado) {
         if (estado === 'Presente') return '<span style="color:#10b981; font-weight:700;">✔</span>';
-        if (estado === 'Retardo') return '<span style="color:#f59e0b; font-weight:700;">✔</span>';
+        if (estado === 'Retardo') return '<span style="color:#f59e0b; font-weight:700;">⏰</span>';
         if (estado === 'Ausente') return '<span style="color:#ef4444; font-weight:700;">✘</span>';
+        if (estado === 'Justificado') return '<span style="color:#3b82f6; font-weight:700;">J</span>';
+        if (estado === 'Escape') return '<span style="color:#dc2626; font-weight:700;">Esc</span>';
         return '<span style="color:#9ca3af;">—</span>';
       };
 
+      const celda = function(al, f) {
+        const r = mapa[String(al.curp) + '|' + f];
+        const estadoActual = r ? r.estado : '';
+        const curp = escapeAttr(al.curp);
+        const fecha = escapeAttr(f);
+        const simboloActual = r ? simbolo(r.estado) : '<span style="color:#e5e7eb;">·</span>';
+        return `<td style="padding:4px 6px; text-align:center; font-size:1.05rem;">
+          <span class="celda-asistencia" data-curp="${curp}" data-fecha="${fecha}" data-estado="${escapeAttr(estadoActual)}" style="cursor:pointer; display:inline-block; min-width:26px; padding:2px 4px; border-radius:4px;" title="Clic para editar">${simboloActual}</span>
+          <select class="select-editar-asistencia" data-curp="${curp}" data-fecha="${fecha}" style="display:none; font-size:0.9rem;">
+            <option value="Presente" ${estadoActual === 'Presente' ? 'selected' : ''}>✔ Presente</option>
+            <option value="Retardo" ${estadoActual === 'Retardo' ? 'selected' : ''}>⏰ Retardo</option>
+            <option value="Ausente" ${estadoActual === 'Ausente' ? 'selected' : ''}>✘ Ausente</option>
+            <option value="Justificado" ${estadoActual === 'Justificado' ? 'selected' : ''}>J Justificado</option>
+            <option value="Escape" ${estadoActual === 'Escape' ? 'selected' : ''}>Esc Escape</option>
+          </select>
+        </td>`;
+      };
+
       const filas = alumnos.map(al => {
-        const celdasFechas = fechas.map(f => {
-          const r = mapa[String(al.curp) + '|' + f];
-          return `<td style="padding:6px 8px; text-align:center; font-size:1.05rem;">${r ? simbolo(r.estado) : '<span style="color:#e5e7eb;">·</span>'}</td>`;
-        }).join('');
+        const celdasFechas = fechas.map(f => celda(al, f)).join('');
 
         let contP = 0, contR = 0, contA = 0;
         fechas.forEach(f => {
@@ -500,7 +557,7 @@ window.cargarResultadosDocente = async function(container) {
       ).join('');
 
       tablaHtml(`
-        <p style="margin:0 0 10px 0; color:#4b5563;"><strong>${alumnos.length}</strong> alumnos · ${escapeAttr(datos.nombres.asignatura)} · ${escapeAttr(datos.nombres.periodo)} · ${fechas.length} fecha(s) de lista</p>
+        <p style="margin:0 0 10px 0; color:#4b5563;"><strong>${alumnos.length}</strong> alumnos · ${escapeAttr(datos.nombres.asignatura)} · ${escapeAttr(datos.nombres.periodo)} · ${fechas.length} fecha(s) de lista · <em>Haz clic en un estatus para editarlo</em></p>
         <div style="max-height:60vh; overflow-x:auto; overflow-y:auto; border:1px solid #e5e7eb; border-radius:10px;">
           <table style="width:100%; border-collapse:collapse;">
             <thead>
@@ -516,6 +573,74 @@ window.cargarResultadosDocente = async function(container) {
           </table>
         </div>
       `);
+
+      bindEdicionAsistencias();
+    }
+
+    // Enlaza los eventos de edición de estatus de asistencia
+    function bindEdicionAsistencias() {
+      const cont = document.getElementById(resultadosContainerId);
+      if (!cont) return;
+
+      cont.querySelectorAll('.celda-asistencia').forEach(span => {
+        span.addEventListener('click', function() {
+          const td = this.parentElement;
+          const select = td ? td.querySelector('.select-editar-asistencia') : null;
+          this.style.display = 'none';
+          if (select) {
+            select.style.display = 'inline-block';
+            select.focus();
+          }
+        });
+      });
+
+      cont.querySelectorAll('.select-editar-asistencia').forEach(select => {
+        select.addEventListener('change', async function() {
+          const curp = this.dataset.curp;
+          const fecha = this.dataset.fecha;
+          const nuevoEstado = this.value;
+          this.disabled = true;
+          try {
+            const res = await post('actualizarAsistencia', {
+              idDocente: idDocente,
+              curp: curp,
+              fecha: fecha,
+              idGrupo: grupoSeleccionado,
+              idAsignatura: asignaturaSeleccionada,
+              idPeriodo: periodoSeleccionado.id,
+              estado: nuevoEstado
+            });
+            if (res.success) {
+              SIREI.utils.mostrarToast('✅ Asistencia actualizada');
+              if (navigator.vibrate) navigator.vibrate(30);
+              actualizarAsistenciaLocal(curp, fecha, nuevoEstado);
+            } else {
+              SIREI.utils.mostrarToast(res.message || 'Error al actualizar', 'error');
+              renderAsistencias();
+            }
+          } catch (e) {
+            SIREI.utils.mostrarToast('Error de conexión: ' + e.message, 'error');
+            renderAsistencias();
+          }
+        });
+      });
+    }
+
+    // Actualiza el estado en los datos locales y re-renderiza la tabla
+    function actualizarAsistenciaLocal(curp, fechaClave, nuevoEstado) {
+      let mejor = null;
+      (datos.asistencias || []).forEach(a => {
+        if (a.curp === curp && claveFecha(a.timestamp) === fechaClave) {
+          if (!mejor || String(a.timestamp) > String(mejor.timestamp)) mejor = a;
+        }
+      });
+      if (mejor) {
+        mejor.estado = nuevoEstado;
+      } else {
+        // Agregar un registro sintético para mostrarlo de inmediato
+        datos.asistencias.push({ curp: curp, nombreAlumno: '', estado: nuevoEstado, timestamp: fechaClave + ' 12:00:00', tipo: 'Manual' });
+      }
+      renderAsistencias();
     }
 
     // ==================== ACTITUDINAL ====================
@@ -930,6 +1055,265 @@ window.cargarResultadosDocente = async function(container) {
         btn.textContent = 'Guardar calificaciones';
         if (guardadoOK) cargarDatos(true);
       }
+    }
+
+    // ==================== VISTA INDIVIDUAL DE ALUMNO ====================
+    function renderAlumnoIndividual(curp) {
+      const alumnos = (datos.alumnos || []);
+      const alumno = alumnos.find(a => a.curp === curp);
+      if (!alumno) {
+        tablaHtml('<p style="color:#6b7280;">Alumno no encontrado.</p>');
+        return;
+      }
+
+      const asistencias = (datos.asistencias || []).filter(a => a.curp === curp);
+      const actitudes = (datos.actitudes || []).filter(a => a.curpAlumno === curp);
+      const entregas = (datos.entregas || []).filter(e => e.curpAlumno === curp);
+      const evidencias = (datos.evidencias || []);
+      const calificaciones = (datos.calificaciones || []).filter(c => c.curp === curp);
+      const finales = (datos.calificacionesFinales || []).filter(f => f.curp === curp);
+
+      // --- Asistencias por fecha ---
+      const fechasMap = {};
+      asistencias.forEach(a => {
+        const c = claveFecha(a.timestamp);
+        if (!c) return;
+        const prev = fechasMap[c];
+        if (!prev || String(a.timestamp) > String(prev.timestamp)) fechasMap[c] = a;
+      });
+      const fechas = Object.keys(fechasMap).sort();
+      let presentes = 0, retardos = 0, ausentes = 0, justificados = 0;
+      const filasAsist = fechas.map(f => {
+        const r = fechasMap[f];
+        const est = r.estado;
+        let color = '#6b7280';
+        if (est === 'Presente') { color = '#10b981'; presentes++; }
+        else if (est === 'Retardo') { color = '#f59e0b'; retardos++; }
+        else if (est === 'Ausente') { color = '#ef4444'; ausentes++; }
+        else if (est === 'Justificado') { color = '#3b82f6'; justificados++; }
+        else if (est === 'Escape') { color = '#dc2626'; }
+        return `<tr style="border-bottom:1px solid #f3f4f6;">
+          <td style="padding:6px 10px;">${escapeAttr(formatearFechaCorta(r.timestamp))}</td>
+          <td style="padding:6px 10px; color:${color}; font-weight:600;">${escapeAttr(est || '—')}</td>
+        </tr>`;
+      }).join('');
+      const totalFechas = fechas.length;
+      const pct = totalFechas > 0 ? Math.round(((presentes + retardos + justificados) / totalFechas) * 100) : 0;
+
+      // --- Actitudes ---
+      const filasAct = actitudes.map(r => {
+        const color = r.clasificacion === 'positiva' ? '#10b981' : r.clasificacion === 'negativa' ? '#ef4444' : '#3b82f6';
+        return `<tr style="border-bottom:1px solid #f3f4f6;">
+          <td style="padding:6px 10px;">${escapeAttr(r.insignia || '🔲')} ${escapeAttr(r.nombreActitud)}</td>
+          <td style="padding:6px 10px;"><span style="display:inline-block; padding:0 8px; border-radius:10px; background:${color}20; color:${color}; font-size:0.75rem; font-weight:600;">${escapeAttr(r.clasificacion)}</span></td>
+          <td style="padding:6px 10px; font-size:0.85rem;">${escapeAttr(formatearFechaHora(r.fechaAsignacion))}</td>
+          <td style="padding:6px 10px; font-size:0.85rem;">${r.notas ? escapeAttr(r.notas) : '—'}</td>
+        </tr>`;
+      }).join('');
+
+      // --- Evidencias y entregas ---
+      const filasEv = evidencias.map(ev => {
+        const en = entregas.find(e => String(e.idEvidencia) === String(ev.id));
+        let estado = '<span style="color:#ef4444;">Pendiente</span>';
+        let calif = '—', escala = '—', obs = '—';
+        if (en) {
+          estado = '<span style="color:#10b981;">Entregado</span>';
+          if (ev.calificacionNumerica) calif = en.calificacion ? escapeAttr(en.calificacion) : '—';
+          if (ev.escalaSuficiencia) escala = en.escala ? escapeAttr(en.escala) : '—';
+          obs = en.observaciones ? escapeAttr(en.observaciones) : '—';
+        }
+        return `<tr style="border-bottom:1px solid #f3f4f6;">
+          <td style="padding:6px 10px;">${escapeAttr(ev.nombreEvidencia)}</td>
+          <td style="padding:6px 10px;">${estado}</td>
+          <td style="padding:6px 10px;">${calif}</td>
+          <td style="padding:6px 10px;">${escala}</td>
+          <td style="padding:6px 10px; font-size:0.85rem;">${obs}</td>
+        </tr>`;
+      }).join('');
+
+      // --- Calificaciones por periodo ---
+      const mapaCal = {};
+      calificaciones.forEach(c => { mapaCal[String(c.idPeriodo)] = c.calificacion; });
+      const filasCal = periodos.map(p => {
+        const v = mapaCal[String(p.id)];
+        return `<tr style="border-bottom:1px solid #f3f4f6;">
+          <td style="padding:6px 10px;">${escapeAttr(p.nombre)}</td>
+          <td style="padding:6px 10px; font-weight:600;">${v !== undefined && v !== '' ? escapeAttr(v) : '—'}</td>
+        </tr>`;
+      }).join('');
+
+      const regFinal = finales[0];
+      let finalProm = '';
+      {
+        let suma = 0, n = 0;
+        periodos.forEach(p => {
+          const v = mapaCal[String(p.id)];
+          if (v !== undefined && v !== '') { suma += Number(v); n++; }
+        });
+        if (n === periodos.length && n > 0) finalProm = redondearCalif(suma / n);
+      }
+
+      let htmlFinal = `<tr style="border-bottom:1px solid #f3f4f6;"><td style="padding:6px 10px;">Final</td><td style="padding:6px 10px; font-weight:700;">${finalProm !== '' ? escapeAttr(finalProm) : '—'}</td></tr>`;
+      if (regFinal) {
+        htmlFinal += `<tr style="border-bottom:1px solid #f3f4f6;"><td style="padding:6px 10px;">Evaluación</td><td style="padding:6px 10px;">${regFinal.evaluacion != null && regFinal.evaluacion !== '' ? escapeAttr(regFinal.evaluacion) : '—'}</td></tr>`;
+        htmlFinal += `<tr style="border-bottom:1px solid #f3f4f6;"><td style="padding:6px 10px;">Definitiva</td><td style="padding:6px 10px; font-weight:700;">${regFinal.definitiva != null && regFinal.definitiva !== '' ? escapeAttr(regFinal.definitiva) : '—'}</td></tr>`;
+      }
+
+      tablaHtml(`
+        <div style="background:#f0f7ff; border:1px solid #bcd8f5; border-radius:8px; padding:12px; margin-bottom:14px;">
+          <p style="margin:0; font-size:1.05rem;"><strong>👤 ${escapeAttr(alumno.nombreCompleto)}</strong></p>
+          <p style="margin:4px 0 0 0; color:#4b5563;">${escapeAttr(datos.nombres.asignatura)} · ${escapeAttr(datos.nombres.periodo)}</p>
+        </div>
+
+        <h4 style="margin:14px 0 6px 0;">📋 Asistencias <span style="font-size:0.85rem; color:#6b7280;">(${pct}% de asistencia · ${presentes} presentes, ${retardos} retardos, ${justificados} justificados, ${ausentes} ausencias)</span></h4>
+        <div style="max-height:200px; overflow-y:auto; border:1px solid #e5e7eb; border-radius:8px; margin-bottom:8px;">
+          <table style="width:100%; border-collapse:collapse;">
+            <thead><tr style="background:#f9fafb;"><th style="padding:6px 10px; text-align:left;">Fecha</th><th style="padding:6px 10px; text-align:left;">Estatus</th></tr></thead>
+            <tbody>${filasAsist || '<tr><td colspan="2" style="padding:6px 10px; color:#6b7280;">Sin registros</td></tr>'}</tbody>
+          </table>
+        </div>
+
+        <h4 style="margin:14px 0 6px 0;">😊 Actitudes asignadas</h4>
+        <div style="max-height:200px; overflow-y:auto; border:1px solid #e5e7eb; border-radius:8px; margin-bottom:8px;">
+          <table style="width:100%; border-collapse:collapse;">
+            <thead><tr style="background:#f9fafb;"><th style="padding:6px 10px; text-align:left;">Actitud</th><th style="padding:6px 10px; text-align:left;">Clasificación</th><th style="padding:6px 10px; text-align:left;">Fecha</th><th style="padding:6px 10px; text-align:left;">Notas</th></tr></thead>
+            <tbody>${filasAct || '<tr><td colspan="4" style="padding:6px 10px; color:#6b7280;">Sin actitudes asignadas</td></tr>'}</tbody>
+          </table>
+        </div>
+
+        <h4 style="margin:14px 0 6px 0;">📚 Evidencias y entregas</h4>
+        <div style="max-height:200px; overflow-y:auto; border:1px solid #e5e7eb; border-radius:8px; margin-bottom:8px;">
+          <table style="width:100%; border-collapse:collapse;">
+            <thead><tr style="background:#f9fafb;"><th style="padding:6px 10px; text-align:left;">Evidencia</th><th style="padding:6px 10px; text-align:left;">Estado</th><th style="padding:6px 10px; text-align:left;">Calif.</th><th style="padding:6px 10px; text-align:left;">Escala</th><th style="padding:6px 10px; text-align:left;">Observaciones</th></tr></thead>
+            <tbody>${filasEv || '<tr><td colspan="5" style="padding:6px 10px; color:#6b7280;">Sin evidencias</td></tr>'}</tbody>
+          </table>
+        </div>
+
+        <h4 style="margin:14px 0 6px 0;">🎯 Calificaciones por periodo</h4>
+        <div style="max-height:200px; overflow-y:auto; border:1px solid #e5e7eb; border-radius:8px;">
+          <table style="width:100%; border-collapse:collapse;">
+            <thead><tr style="background:#f9fafb;"><th style="padding:6px 10px; text-align:left;">Periodo</th><th style="padding:6px 10px; text-align:left;">Calificación</th></tr></thead>
+            <tbody>${filasCal}${htmlFinal}</tbody>
+          </table>
+        </div>
+      `);
+    }
+
+    // ==================== TOPS / PODIUM ====================
+    async function renderTops() {
+      const tablaDiv = document.getElementById(resultadosContainerId);
+      if (!tablaDiv) return;
+      const grupos = gruposAsignados();
+
+      tablaDiv.innerHTML = `
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px; margin-bottom:14px;">
+          <div>
+            <label style="font-weight:500;">Periodo:</label>
+            <select id="selectTopPeriodo" style="width:100%; padding:10px; border-radius:8px; border:1px solid #d1d5db; margin-top:4px;">
+              <option value="">Todos los periodos</option>
+              ${periodos.map(p => `<option value="${escapeAttr(p.id)}">${escapeAttr(p.nombre)}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label style="font-weight:500;">Grupo:</label>
+            <select id="selectTopGrupo" style="width:100%; padding:10px; border-radius:8px; border:1px solid #d1d5db; margin-top:4px;">
+              <option value="">Todos mis grupos</option>
+              ${grupos.map(g => `<option value="${escapeAttr(g.idGrupo)}">${escapeAttr(g.nombre)}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label style="font-weight:500;">Mostrar:</label>
+            <select id="selectTopN" style="width:100%; padding:10px; border-radius:8px; border:1px solid #d1d5db; margin-top:4px;">
+              <option value="3">Top 3</option>
+              <option value="5" selected>Top 5</option>
+              <option value="10">Top 10</option>
+              <option value="100000">Todos</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-weight:500;">Tipo de actitud (top 7):</label>
+            <select id="selectTopTipoActitud" style="width:100%; padding:10px; border-radius:8px; border:1px solid #d1d5db; margin-top:4px;">
+              <option value="todas">Todas</option>
+              <option value="positiva">Positiva</option>
+              <option value="negativa">Negativa</option>
+              <option value="neutra">Neutra</option>
+              <option value="personalizada">Personalizada</option>
+            </select>
+          </div>
+        </div>
+        <div id="topContenido"><div class="loader-moderno"><div class="spinner"></div><p>Cargando tops...</p></div></div>
+      `;
+
+      async function cargarTops() {
+        const idPeriodo = document.getElementById('selectTopPeriodo').value;
+        const idGrupo = document.getElementById('selectTopGrupo').value;
+        const topN = parseInt(document.getElementById('selectTopN').value, 10) || 5;
+        const tipoActitud = document.getElementById('selectTopTipoActitud').value;
+
+        const cont = document.getElementById('topContenido');
+        cont.innerHTML = '<div class="loader-moderno"><div class="spinner"></div><p>Cargando tops...</p></div>';
+
+        try {
+          const res = await post('obtenerTopsDocente', {
+            idDocente: idDocente,
+            idPeriodo: idPeriodo,
+            idGrupo: idGrupo,
+            tipoActitud: tipoActitud
+          });
+          if (!res.success) {
+            cont.innerHTML = '<div class="error">' + escapeAttr(res.message || 'Error al obtener tops.') + '</div>';
+            return;
+          }
+
+          const alumnos = res.alumnos || [];
+          const tops = [
+            { titulo: '🥇 Más asistencias (solo presentes)', key: 'asistencia_presente' },
+            { titulo: '⏰ Más asistencias (presentes + retardos)', key: 'asistencia_presente_retardo' },
+            { titulo: '📄 Más asistencias (presentes + justificadas)', key: 'asistencia_presente_justificado' },
+            { titulo: '✅ Más asistencias (presentes + retardos + justificadas)', key: 'asistencia_presente_retardo_justificado' },
+            { titulo: '⏳ Más retardos', key: 'retardos' },
+            { titulo: '❌ Más ausencias', key: 'ausencias' },
+            { titulo: '😊 Más asignaciones actitudinales (' + tipoActitud + ')', key: 'actitudes_total' },
+            { titulo: '📚 Mejores resultados académicos (más entregas)', key: 'entregas' }
+          ];
+
+          function ordinal(i) {
+            if (i === 1) return '1°';
+            if (i === 2) return '2°';
+            if (i === 3) return '3°';
+            return i + '°';
+          }
+
+          function tarjeta(top) {
+            const lista = alumnos.slice().sort((a, b) => (b[top.key] || 0) - (a[top.key] || 0)).slice(0, topN);
+            const filas = lista.map((a, i) => `
+              <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-bottom:1px solid #f3f4f6;">
+                <span style="font-weight:800; color:#1E3A8A; min-width:34px;">${ordinal(i + 1)}</span>
+                <div style="flex:1;">
+                  <div style="font-weight:600;">${escapeAttr(a.nombre)}</div>
+                  <div style="font-size:0.75rem; color:#6b7280;">${escapeAttr(a.grupo)}</div>
+                </div>
+                <span style="font-weight:700; color:#10b981;">${a[top.key] || 0}</span>
+              </div>`).join('');
+            return `
+              <div style="background:white; border:1px solid #e5e7eb; border-radius:10px; padding:10px 14px; margin-bottom:12px;">
+                <h4 style="margin:0 0 6px 0; font-size:0.98rem;">${top.titulo}</h4>
+                ${lista.length === 0 ? '<p style="color:#6b7280; font-size:0.85rem;">Sin datos para este filtro.</p>' : filas}
+              </div>`;
+          }
+
+          cont.innerHTML = tops.map(tarjeta).join('');
+        } catch (e) {
+          cont.innerHTML = '<div class="error">Error de conexión: ' + escapeAttr(e.message) + '</div>';
+        }
+      }
+
+      document.getElementById('selectTopPeriodo').addEventListener('change', cargarTops);
+      document.getElementById('selectTopGrupo').addEventListener('change', cargarTops);
+      document.getElementById('selectTopN').addEventListener('change', cargarTops);
+      document.getElementById('selectTopTipoActitud').addEventListener('change', cargarTops);
+
+      await cargarTops();
     }
 
     // ---- Helper para pintar en el contenedor de resultados ----
