@@ -100,7 +100,12 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
         <!-- Observaciones y asignación -->
         <div style="background:white; border-radius:8px; padding:16px; margin-bottom:16px; box-shadow:0 1px 3px rgba(0,0,0,0.1);">
           <div style="margin-bottom:12px;">
-            <label style="font-weight:600;">Observaciones (opcional)</label>
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+              <label style="font-weight:600;">Observaciones (opcional)</label>
+              <label style="display:flex; align-items:center; gap:6px; font-weight:500; font-size:0.85rem; cursor:pointer;">
+                <input type="checkbox" id="chkMantenerObs" style="width:18px; height:18px; accent-color:#1E3A8A;"> Mantener
+              </label>
+            </div>
             <!-- CAMPO DE OBSERVACIONES Y DICTADO (rediseñado para móviles) -->
             <div style="position:relative; width:100%;">
               <textarea id="observacionesInput" rows="2" style="width:100%; padding:10px 44px 10px 10px; border-radius:8px; border:1px solid #d1d5db; resize:vertical; min-height:44px; font-size:16px; box-sizing:border-box;"></textarea>
@@ -230,9 +235,8 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
         if (e.key === 'Enter') asignarActitud();
       });
 
-      // Botón QR (con debounce)
+      // Botón QR (cierra la cámara en la primera lectura para evitar duplicados)
       let qrReader = null;
-      let ultimoEscaneoQR = 0;
       document.getElementById('btnEscanearQR').addEventListener('click', () => {
         const readerContainer = document.getElementById('qr-reader-actitud');
         const btnEscanear = document.getElementById('btnEscanearQR');
@@ -252,10 +256,13 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
           { facingMode: "environment" },
           config,
           async (decodedText) => {
-            // Debounce: solo procesar si ha pasado al menos 2 segundos
-            const ahora = Date.now();
-            if (ahora - ultimoEscaneoQR < 2000) return;
-            ultimoEscaneoQR = ahora;
+            // Cerrar la cámara INMEDIATAMENTE para no volver a leer el mismo código
+            if (qrReader) {
+              qrReader.stop().catch(() => {});
+              qrReader = null;
+            }
+            readerContainer.style.display = 'none';
+            document.getElementById('btnEscanearQR').textContent = '📷 QR';
 
             const curp = decodedText.trim().toUpperCase();
             const alumno = alumnosGrupo.find(a => a.curp === curp);
@@ -265,13 +272,14 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
             }
             document.getElementById('inputAlumno').value = alumno.nombreCompleto;
             await asignarActitudPorCURP(curp);
-            qrReader.stop().catch(() => {});
-            qrReader = null;
-            readerContainer.style.display = 'none';
-            document.getElementById('btnEscanearQR').textContent = '📷 QR';
           },
           (err) => {}
-        );
+        ).catch(() => {
+          // Si falla el arranque de la cámara, restaurar el estado del botón
+          if (qrReader) { qrReader.stop().catch(() => {}); qrReader = null; }
+          readerContainer.style.display = 'none';
+          document.getElementById('btnEscanearQR').textContent = '📷 QR';
+        });
       });
 
       // Botón dictar (Speech Recognition) - CORREGIDO
@@ -355,13 +363,21 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
     const observaciones = document.getElementById('observacionesInput').value.trim();
 
     let nombreActitudPersonalizada = '';
+    let nombreActitud = '';
     if (idActitud === '__otra__') {
       nombreActitudPersonalizada = document.getElementById('inputOtraActitud').value.trim();
       if (!nombreActitudPersonalizada) {
         SIREI.utils.mostrarToast('Escribe el nombre de la actitud personalizada.', 'error');
         return;
       }
+      nombreActitud = nombreActitudPersonalizada;
+    } else {
+      const act = actitudesDisponibles.find(a => a.id == idActitud);
+      nombreActitud = act ? act.nombre : idActitud;
     }
+
+    const alumno = alumnosGrupo.find(a => a.curp === curp);
+    const nombreAlumno = alumno ? alumno.nombreCompleto : curp;
 
     const btnAsignar = document.getElementById('btnAsignar');
     btnAsignar.disabled = true;
@@ -391,7 +407,7 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
       });
       const result = await response.json();
       if (result.success) {
-        SIREI.utils.mostrarToast('✅ Actitud asignada correctamente');
+        SIREI.utils.mostrarToast('✅ ' + nombreAlumno + ' → ' + nombreActitud);
         const nuevaAsignacion = result.asignacion;
         asignacionesRecientes.unshift({
           ...nuevaAsignacion,
@@ -399,8 +415,12 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
         });
         mostrarHistorial(asignacionesRecientes);
         document.getElementById('inputAlumno').value = '';
-        document.getElementById('observacionesInput').value = '';
-        if (navigator.vibrate) navigator.vibrate(50);
+        // Respetar la casilla "Mantener": solo se limpia si NO está marcada
+        const chkMantener = document.getElementById('chkMantenerObs');
+        if (!chkMantener || !chkMantener.checked) {
+          document.getElementById('observacionesInput').value = '';
+        }
+        if (navigator.vibrate) navigator.vibrate(100);
       } else {
         SIREI.utils.mostrarToast(result.message || 'Error al asignar', 'error');
       }
