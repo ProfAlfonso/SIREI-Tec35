@@ -276,6 +276,12 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
         <button id="btnAsignarEvidencia" class="btn btn-success" style="flex:1;">Asignar</button>
       </div>
       <!-- CAMPO DE OBSERVACIONES Y DICTADO (rediseñado para móviles) -->
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px;">
+        <span style="font-weight:600; font-size:0.9rem;">Observaciones (opcional)</span>
+        <label style="display:flex; align-items:center; gap:6px; font-weight:500; font-size:0.8rem; cursor:pointer;">
+          <input type="checkbox" id="chkMantenerObsEvidencia" style="width:16px; height:16px; accent-color:#1E3A8A;"> Mantener
+        </label>
+      </div>
       <div style="position:relative; width:100%; margin-bottom:6px;">
         <textarea id="observacionesEvidencia" rows="2" placeholder="Observaciones (opcional)..." style="width:100%; padding:10px 44px 10px 10px; border-radius:8px; border:1px solid #d1d5db; resize:vertical; min-height:44px; font-size:16px; box-sizing:border-box;"></textarea>
         <button id="btnDictadoEvidenciaObs" type="button" style="position:absolute; right:6px; bottom:6px; width:36px; height:36px; padding:0; font-size:1.2rem; border:none; background:transparent; display:flex; align-items:center; justify-content:center; border-radius:50%; cursor:pointer;" title="Dictar por voz">
@@ -295,6 +301,14 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
     const inputBusqueda = document.getElementById('busquedaAlumnoEvidencia');
     const resultadoDiv = document.getElementById('resultadoIndividualEvidencia');
     const obsTextarea = document.getElementById('observacionesEvidencia');
+
+    // Limpia las observaciones solo si la casilla "Mantener" no está activa
+    function limpiarObsEvidencia() {
+      const chk = document.getElementById('chkMantenerObsEvidencia');
+      if ((!chk || !chk.checked) && obsTextarea) {
+        obsTextarea.value = '';
+      }
+    }
 
     function mostrarAlumno(asistencia, entrega) {
       resultadoDiv.innerHTML = `
@@ -324,7 +338,7 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
           ultimosRegistros.unshift(`${ts} - ${asistencia.nombreCompleto}${calificacion?' ('+calificacion+')':''}${escala?' ['+escala+']':''}`);
           if (navigator.vibrate) navigator.vibrate(100);
           inputBusqueda.value = '';
-          obsTextarea.value = '';
+          limpiarObsEvidencia();
         }
         mostrarDetalleEvidencia(ev);
       });
@@ -364,7 +378,7 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
         ultimosRegistros.unshift(`${ts} - ${alumno.nombreCompleto}${calificacion?' ('+calificacion+')':''}${escala?' ['+escala+']':''}`);
         if (navigator.vibrate) navigator.vibrate(100);
         inputBusqueda.value = '';
-        obsTextarea.value = '';
+        limpiarObsEvidencia();
       }
       mostrarDetalleEvidencia(ev);
     });
@@ -373,7 +387,6 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
     const btnEscanear = document.getElementById('btnEscanearEvidencia');
     if (btnEscanear) {
       let qrReaderEv = null;
-      let ultimoEscaneoEv = 0;
       btnEscanear.addEventListener('click', () => {
         const readerDiv = document.getElementById('qr-evidence-reader');
         if (readerDiv.style.display === 'block') {
@@ -390,10 +403,10 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
           { facingMode: "environment" },
           { fps: 10, qrbox: 250 },
           async (decodedText) => {
-            // Debounce: solo procesar si ha pasado al menos 2 segundos
-            const ahora = Date.now();
-            if (ahora - ultimoEscaneoEv < 2000) return;
-            ultimoEscaneoEv = ahora;
+            // Cerrar la cámara INMEDIATAMENTE para no volver a leer el mismo código
+            if (qrReaderEv) { qrReaderEv.stop().catch(() => {}); qrReaderEv = null; }
+            readerDiv.style.display = 'none';
+            btnEscanear.textContent = 'Escanear QR';
 
             const curp = decodedText.trim().toUpperCase();
             const alumno = alumnosGrupo.find(a => a.curp === curp);
@@ -408,11 +421,8 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
               const ts = new Date().toLocaleString('es-ES');
               ultimosRegistros.unshift(`${ts} - ${alumno.nombreCompleto} (QR)`);
               if (navigator.vibrate) navigator.vibrate(100);
-              obsTextarea.value = '';
+              limpiarObsEvidencia();
             }
-            if (qrReaderEv) { qrReaderEv.stop().catch(() => {}); qrReaderEv = null; }
-            readerDiv.style.display = 'none';
-            btnEscanear.textContent = 'Escanear QR';
             mostrarDetalleEvidencia(ev);
           },
           () => {}
