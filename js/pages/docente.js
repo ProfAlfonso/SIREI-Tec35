@@ -193,6 +193,20 @@ async function cargarInicio(containerParam) {
   grupos = resultados[1] || [];
   asignaturas = resultados[2] || [];
 
+  // ---- Finalizar clases vencidas (olvidadas) antes de leer la clase activa ----
+  try {
+    await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        accion: 'finalizarClasesVencidas',
+        token: token
+      })
+    }).then(r => r.json());
+  } catch (e) {
+    console.error('No se pudo verificar clases vencidas:', e);
+  }
+
   // ---- Paralelizar asignaciones y clase activa (dependen de idDocente) ----
   const resultados2 = await Promise.all([
     fetch(API_URL, {
@@ -269,6 +283,14 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
   if (datosParalelos[0].success) alumnosGrupo = datosParalelos[0].alumnos || [];
   if (datosParalelos[1].success) asistencias = datosParalelos[1].asistencias || [];
   if (datosParalelos[2].success) salidas = datosParalelos[2].salidas || [];
+
+  // Ordenar por apellido paterno por defecto (estándar en listas escolares de México)
+  alumnosGrupo.sort((a, b) => {
+    const apA = (a.apellidoPaterno || '').toLowerCase();
+    const apB = (b.apellidoPaterno || '').toLowerCase();
+    if (apA !== apB) return apA.localeCompare(apB);
+    return (a.nombreCompleto || '').toLowerCase().localeCompare((b.nombreCompleto || '').toLowerCase());
+  });
 
   const alumnoFuera = salidas.find(s => s.estado === 'Fuera');
 
@@ -356,9 +378,6 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
             <button class="boton-motivo" data-motivo="Baño" style="padding:14px; background:#fff; border:2px solid #e5e7eb; border-radius:10px; font-size:1rem; cursor:pointer; display:flex; align-items:center; gap:10px; justify-content:center;">
               <span style="font-size:1.5rem;">🚻</span> Baño
             </button>
-            <button class="boton-motivo" data-motivo="Enfermería" style="padding:14px; background:#fff; border:2px solid #e5e7eb; border-radius:10px; font-size:1rem; cursor:pointer; display:flex; align-items:center; gap:10px; justify-content:center;">
-              <span style="font-size:1.5rem;">🏥</span> Enfermería
-            </button>
             <button class="boton-motivo otro" data-motivo="Otro" style="grid-column: span 2; padding:14px; background:#fff; border:2px dashed #e5e7eb; border-radius:10px; font-size:1rem; cursor:pointer; display:flex; align-items:center; gap:10px; justify-content:center;">
               <span style="font-size:1.5rem;">📝</span> Otro
             </button>
@@ -366,6 +385,14 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
           <div class="campo-otro-motivo" id="campoOtroMotivo" style="display:none; margin-top:12px;">
             <label style="font-weight:500; display:block; margin-bottom:4px;">Especifica el motivo:</label>
             <textarea id="textoOtroMotivo" rows="2" style="width:100%; padding:10px; border-radius:8px; border:1px solid #d1d5db; font-size:1rem;"></textarea>
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-top:10px;">
+              <label style="display:flex; align-items:center; gap:8px; font-weight:500; font-size:0.9rem; cursor:pointer;">
+                <input type="checkbox" id="chkRegresa" checked style="width:18px; height:18px; accent-color:#10b981;"> ¿Va a regresar?
+              </label>
+              <label style="display:flex; align-items:center; gap:6px; font-weight:500; font-size:0.8rem; cursor:pointer;">
+                <input type="checkbox" id="chkMantenerMotivo" style="width:16px; height:16px; accent-color:#1E3A8A;"> Mantener
+              </label>
+            </div>
           </div>
         </div>
 
@@ -391,12 +418,12 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
 
         <!-- Historial de movimientos -->
         <div id="historial-salidas" style="margin-top:16px; border-top:2px solid #e5e7eb; padding-top:12px;">
-          <h3 style="font-size:1rem; margin:0 0 8px 0; display:flex; align-items:center; gap:6px;">
+          <h3 style="font-size:1rem; margin:0 0 8px 0; display:flex; align-items:center; gap:6px; color:#1f2937;">
             <span>📋</span> Historial reciente
-            <span id="contadorHistorial" style="font-size:0.75rem; color:#6b7280; font-weight:400;"></span>
+            <span id="contadorHistorial" style="font-size:0.75rem; color:#4b5563; font-weight:400;"></span>
           </h3>
-          <div id="listaHistorial" style="max-height:200px; overflow-y:auto;">
-            <p style="color:#6b7280; font-size:0.9rem;">Cargando historial...</p>
+          <div id="listaHistorial" style="max-height:200px; overflow-y:auto; background:#ffffff; border:1px solid #e5e7eb; border-radius:8px; padding:8px 10px; color:#1f2937;">
+            <p style="color:#4b5563; font-size:0.9rem;">Cargando historial...</p>
           </div>
       </div>
       </div>
@@ -485,6 +512,7 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
     <div style="margin-bottom:12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
       <button id="btnAsistenciaQR" class="btn btn-primary" style="flex:1;">📷 QR</button>
       <button id="btnAsistenciaManual" class="btn btn-secondary" style="flex:1;">✏️ Manual</button>
+      <button id="btnOrdenAsistencia" class="btn btn-secondary" style="padding:6px 10px; flex:0 0 auto;" title="Alternar orden de la lista">🔤 Apellido</button>
       <div style="display:flex; align-items:center; gap:6px; margin-left:auto;">
         <label for="chkRetardo" style="font-size:0.9rem; font-weight:500;">⏰ Retardo</label>
         <input type="checkbox" id="chkRetardo" style="width:20px; height:20px; accent-color:#f59e0b;">
@@ -527,7 +555,7 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
         ${alumnosGrupo.map(alumno => {
           const asist = asistencias.find(a => a.curp === alumno.curp);
           const estadoActual = asist ? asist.estado : 'Pendiente';
-          return `<div class="alumno-item">
+          return `<div class="alumno-item" data-curp="${alumno.curp}">
             <span>${SIREI.utils.escapeHtml(alumno.nombreCompleto)}</span>
             <select class="select-estado-manual" data-curp="${alumno.curp}">
               <option value="Presente" ${estadoActual === 'Presente' ? 'selected' : ''}>Presente</option>
@@ -545,7 +573,7 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
         const asist = asistencias.find(a => a.curp === alumno.curp);
         const estado = asist ? asist.estado : 'Pendiente';
         const color = estado === 'Presente' ? '#10b981' : estado === 'Retardo' ? '#f59e0b' : estado === 'Ausente' ? '#ef4444' : '#6b7280';
-        return `<div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid #f3f4f6; font-size:0.9rem;">
+        return `<div data-curp="${alumno.curp}" style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid #f3f4f6; font-size:0.9rem;">
           <span>${SIREI.utils.escapeHtml(alumno.nombreCompleto)}</span>
           <span style="color:${color}; font-weight:600;">${estado}</span>
         </div>`;
@@ -566,8 +594,52 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
   let qrReaderAsistencia = null;
   let qrReaderSalidaFull = null;
   let escaneoActivo = false;
-  // Variable para controlar el debounce del QR (último tiempo de escaneo)
-  let ultimoEscaneoQR = 0;
+
+  // Orden de la lista de asistencia: 'apellido' (por defecto) o 'nombre'
+  let ordenAsistencia = 'apellido';
+
+  function compararAlumnos(a, b) {
+    if (ordenAsistencia === 'apellido') {
+      const apA = (a.apellidoPaterno || '').toLowerCase();
+      const apB = (b.apellidoPaterno || '').toLowerCase();
+      if (apA !== apB) return apA.localeCompare(apB);
+      return (a.nombreCompleto || '').toLowerCase().localeCompare((b.nombreCompleto || '').toLowerCase());
+    }
+    return (a.nombreCompleto || '').toLowerCase().localeCompare((b.nombreCompleto || '').toLowerCase());
+  }
+
+  function alumnosOrdenados() {
+    return alumnosGrupo.slice().sort(compararAlumnos);
+  }
+
+  // Reordena la lista manual y el resumen sin perder los estados ya seleccionados
+  function reordenarAsistencia() {
+    const ordenados = alumnosOrdenados();
+    const mapaOrden = {};
+    ordenados.forEach((a, i) => { mapaOrden[a.curp] = i; });
+
+    const listaManual = document.querySelector('.lista-alumnos-manual');
+    if (listaManual) {
+      const items = Array.from(listaManual.querySelectorAll('.alumno-item'));
+      items.sort((x, y) => {
+        const ix = mapaOrden[x.dataset.curp] != null ? mapaOrden[x.dataset.curp] : 9999;
+        const iy = mapaOrden[y.dataset.curp] != null ? mapaOrden[y.dataset.curp] : 9999;
+        return ix - iy;
+      });
+      items.forEach(item => listaManual.appendChild(item));
+    }
+
+    const resumen = document.getElementById('resumen-asistencia');
+    if (resumen) {
+      const rows = Array.from(resumen.children);
+      rows.sort((x, y) => {
+        const ix = mapaOrden[x.dataset.curp] != null ? mapaOrden[x.dataset.curp] : 9999;
+        const iy = mapaOrden[y.dataset.curp] != null ? mapaOrden[y.dataset.curp] : 9999;
+        return ix - iy;
+      });
+      rows.forEach(r => resumen.appendChild(r));
+    }
+  }
 
   // ---- Función para actualizar contadores ----
   function actualizarContadores() {
@@ -645,7 +717,18 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     });
   });
 
-  // ---- 2. ASISTENCIA QR (con debounce) ----
+  // ---- 1.1 ORDEN DE LA LISTA (apellido / nombre) ----
+  const btnOrden = document.getElementById('btnOrdenAsistencia');
+  if (btnOrden) {
+    btnOrden.addEventListener('click', () => {
+      ordenAsistencia = (ordenAsistencia === 'apellido') ? 'nombre' : 'apellido';
+      btnOrden.textContent = (ordenAsistencia === 'apellido') ? '🔤 Apellido' : '🔤 Nombre';
+      reordenarAsistencia();
+      SIREI.utils.mostrarToast('Orden: ' + (ordenAsistencia === 'apellido' ? 'apellido paterno' : 'nombre'), 'warning');
+    });
+  }
+
+  // ---- 2. ASISTENCIA QR (cierra cámara al leer) ----
   document.getElementById('btnAsistenciaQR').addEventListener('click', () => {
     document.getElementById('vistaQR').style.display = 'block';
     document.getElementById('vistaManual').style.display = 'none';
@@ -678,10 +761,16 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
       { facingMode: "environment" },
       config,
       async (decodedText) => {
-        // Debounce: solo procesar si ha pasado al menos 2 segundos desde el último escaneo
-        const ahora = Date.now();
-        if (ahora - ultimoEscaneoQR < 2000) return;
-        ultimoEscaneoQR = ahora;
+        // Cerrar cámara INMEDIATAMENTE para no leer el mismo código repetido
+        if (qrReaderAsistencia) {
+          qrReaderAsistencia.stop().catch(() => {});
+          qrReaderAsistencia = null;
+        }
+        const readerContainer = document.getElementById('qr-reader-asistencia');
+        if (readerContainer) readerContainer.style.display = 'none';
+        const btnCam = document.getElementById('btnAbrirCamara');
+        if (btnCam) btnCam.textContent = '📷 Abrir cámara';
+        escaneoActivo = false;
 
         const curp = decodedText.trim().toUpperCase();
         const alumno = alumnosGrupo.find(a => a.curp === curp);
@@ -696,6 +785,7 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
 
         // Actualizar vista
         actualizarEstadoAlumno(curp, estado);
+        if (navigator.vibrate) navigator.vibrate(50);
 
         // Enviar al servidor (incluyendo idDocente)
         fetch(API_URL, {
@@ -910,99 +1000,113 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
       if (dataFuera.success) {
         const todas = dataFuera.salidas || [];
         const fuera = todas.filter(s => s.estado === 'Fuera');
+        const fueraDefinitivo = todas.filter(s => s.estado === 'Fuera definitivo');
 
-        if (fuera.length === 0) {
+        // Limpiar cronómetro anterior
+        if (window._intervalSalida) {
+          clearInterval(window._intervalSalida);
+          window._intervalSalida = null;
+        }
+        if (btnEscape) btnEscape.style.display = 'none';
+
+        if (fuera.length === 0 && fueraDefinitivo.length === 0) {
           listaDiv.innerHTML = '<span style="color:#10b981;">✅ Todos los alumnos están dentro.</span>';
-          if (btnEscape) btnEscape.style.display = 'none';
-          if (window._intervalSalida) {
-            clearInterval(window._intervalSalida);
-            window._intervalSalida = null;
-          }
         } else {
-          const s = fuera[0];
-          const alumno = alumnosGrupo.find(a => a.curp === s.curp);
-          const nombre = alumno ? SIREI.utils.escapeHtml(alumno.nombreCompleto) : s.curp;
-          
-          let salidaTimestamp = s.salidaFormateada || s.salidaTimestamp || '';
+          let html = '';
 
-          if (!salidaTimestamp) {
-            listaDiv.innerHTML = `
-              <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
-                <span><strong>${nombre}</strong> - Motivo: ${s.motivo || 'Sin motivo'}</span>
-                <span id="cronometroSalida" style="font-size:1.2rem; font-weight:bold; color:#6b7280;">--:--</span>
-              </div>
-            `;
-            if (btnEscape) btnEscape.style.display = 'none';
-            return;
+          // Alumnos que no regresan: sin cronómetro y no bloquean otras salidas
+          fueraDefinitivo.forEach(sd => {
+            const alumnoD = alumnosGrupo.find(a => a.curp === sd.curp);
+            const nombreD = alumnoD ? SIREI.utils.escapeHtml(alumnoD.nombreCompleto) : sd.curp;
+            html += `
+              <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; padding:6px 0; border-bottom:1px solid #f3f4f6;">
+                <span><strong>${nombreD}</strong> - ${sd.motivo || 'Sin motivo'}</span>
+                <span style="font-size:0.78rem; font-weight:700; color:#6d28d9; background:#ede9fe; padding:2px 10px; border-radius:12px;">Fuera definitivo</span>
+              </div>`;
+          });
+
+          // Alumno que va a regresar: cronómetro y opción de escape
+          if (fuera.length > 0) {
+            const s = fuera[0];
+            const alumno = alumnosGrupo.find(a => a.curp === s.curp);
+            const nombre = alumno ? SIREI.utils.escapeHtml(alumno.nombreCompleto) : s.curp;
+            let salidaTimestamp = s.salidaFormateada || s.salidaTimestamp || '';
+
+            if (!salidaTimestamp) {
+              html += `
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; padding:6px 0; border-bottom:1px solid #f3f4f6;">
+                  <span><strong>${nombre}</strong> - Motivo: ${s.motivo || 'Sin motivo'}</span>
+                  <span id="cronometroSalida" style="font-size:1.2rem; font-weight:bold; color:#6b7280;">--:--</span>
+                </div>`;
+            } else {
+              html += `
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; padding:6px 0; border-bottom:1px solid #f3f4f6;">
+                  <span><strong>${nombre}</strong> - Motivo: ${s.motivo || 'Sin motivo'}</span>
+                  <span id="cronometroSalida" style="font-size:1.2rem; font-weight:bold; color:#10b981;">00:00</span>
+                </div>`;
+
+              const actualizarCrono = () => {
+                const crono = document.getElementById('cronometroSalida');
+                if (!crono) return;
+                
+                try {
+                  const ahora = new Date();
+                  let fechaSalida;
+                  if (salidaTimestamp.includes('T')) {
+                    fechaSalida = new Date(salidaTimestamp);
+                  } else if (salidaTimestamp.includes('/')) {
+                    const partes = salidaTimestamp.split(' ');
+                    if (partes.length < 2) { crono.textContent = '--:--'; return; }
+                    const fechaPartes = partes[0].split('/');
+                    const horaPartes = partes[1].split(':');
+                    if (fechaPartes.length < 3 || horaPartes.length < 3) { crono.textContent = '--:--'; return; }
+                    
+                    fechaSalida = new Date(
+                      parseInt(fechaPartes[2]),      
+                      parseInt(fechaPartes[1]) - 1,   
+                      parseInt(fechaPartes[0]),       
+                      parseInt(horaPartes[0]),        
+                      parseInt(horaPartes[1]),        
+                      parseInt(horaPartes[2])         
+                    );
+                  } else {
+                    crono.textContent = '--:--'; return;
+                  }
+                  
+                  const diffMs = ahora - fechaSalida;
+                  if (diffMs < 0 || isNaN(fechaSalida.getTime())) { 
+                    crono.textContent = '00:00'; 
+                    return; 
+                  }
+                  const totalSegundos = Math.floor(diffMs / 1000);
+                  const minutos = Math.floor(totalSegundos / 60);
+                  const segundos = totalSegundos % 60;
+                  const minutosStr = String(minutos).padStart(2, '0');
+                  const segundosStr = String(segundos).padStart(2, '0');
+                  crono.textContent = `${minutosStr}:${segundosStr}`;
+
+                  if (totalSegundos > 300) {
+                    crono.style.color = '#ef4444';
+                    if (btnEscape) {
+                      btnEscape.style.display = 'block';
+                      btnEscape.dataset.curp = s.curp;
+                    }
+                  } else {
+                    crono.style.color = '#10b981';
+                    if (btnEscape) btnEscape.style.display = 'none';
+                  }
+                } catch (e) {
+                  console.error('Error en cronómetro:', e);
+                  if (crono) crono.textContent = '--:--';
+                }
+              };
+
+              actualizarCrono();
+              window._intervalSalida = setInterval(actualizarCrono, 1000);
+            }
           }
 
-          listaDiv.innerHTML = `
-            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
-              <span><strong>${nombre}</strong> - Motivo: ${s.motivo || 'Sin motivo'}</span>
-              <span id="cronometroSalida" style="font-size:1.2rem; font-weight:bold; color:#10b981;">00:00</span>
-            </div>
-          `;
-
-          if (window._intervalSalida) clearInterval(window._intervalSalida);
-
-          const actualizarCrono = () => {
-            const crono = document.getElementById('cronometroSalida');
-            if (!crono) return;
-            
-            try {
-              const ahora = new Date();
-              let fechaSalida;
-              if (salidaTimestamp.includes('T')) {
-                fechaSalida = new Date(salidaTimestamp);
-              } else if (salidaTimestamp.includes('/')) {
-                const partes = salidaTimestamp.split(' ');
-                if (partes.length < 2) { crono.textContent = '--:--'; return; }
-                const fechaPartes = partes[0].split('/');
-                const horaPartes = partes[1].split(':');
-                if (fechaPartes.length < 3 || horaPartes.length < 3) { crono.textContent = '--:--'; return; }
-                
-                fechaSalida = new Date(
-                  parseInt(fechaPartes[2]),      
-                  parseInt(fechaPartes[1]) - 1,   
-                  parseInt(fechaPartes[0]),       
-                  parseInt(horaPartes[0]),        
-                  parseInt(horaPartes[1]),        
-                  parseInt(horaPartes[2])         
-                );
-              } else {
-                crono.textContent = '--:--'; return;
-              }
-              
-              const diffMs = ahora - fechaSalida;
-              if (diffMs < 0 || isNaN(fechaSalida.getTime())) { 
-                crono.textContent = '00:00'; 
-                return; 
-              }
-              const totalSegundos = Math.floor(diffMs / 1000);
-              const minutos = Math.floor(totalSegundos / 60);
-              const segundos = totalSegundos % 60;
-              const minutosStr = String(minutos).padStart(2, '0');
-              const segundosStr = String(segundos).padStart(2, '0');
-              crono.textContent = `${minutosStr}:${segundosStr}`;
-
-              if (totalSegundos > 300) {
-                crono.style.color = '#ef4444';
-                if (btnEscape) {
-                  btnEscape.style.display = 'block';
-                  btnEscape.dataset.curp = s.curp;
-                }
-              } else {
-                crono.style.color = '#10b981';
-                if (btnEscape) btnEscape.style.display = 'none';
-              }
-            } catch (e) {
-              console.error('Error en cronómetro:', e);
-              if (crono) crono.textContent = '--:--';
-            }
-          };
-
-          actualizarCrono();
-          window._intervalSalida = setInterval(actualizarCrono, 1000);
+          listaDiv.innerHTML = html;
         }
       }
 
@@ -1029,9 +1133,10 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
           listaHist.innerHTML = movs.map(m => {
             const alumno = alumnosGrupo.find(a => a.curp === m.curp);
             const nombre = alumno ? SIREI.utils.escapeHtml(alumno.nombreCompleto) : m.curp;
-            const esSalida = m.estado === 'Fuera' || m.estado === 'Escape';
-            const icono = esSalida ? (m.estado === 'Escape' ? '🏃' : '🚪') : '🚪✅';
-            const color = esSalida ? (m.estado === 'Escape' ? '#dc2626' : '#92400e') : '#065f46';
+            const esSalida = m.estado === 'Fuera' || m.estado === 'Escape' || m.estado === 'Fuera definitivo';
+            const esDefinitivo = m.estado === 'Fuera definitivo';
+            const icono = esDefinitivo ? '🚪🚫' : (esSalida ? (m.estado === 'Escape' ? '🏃' : '🚪') : '🚪✅');
+            const color = esDefinitivo ? '#6d28d9' : (esSalida ? (m.estado === 'Escape' ? '#dc2626' : '#92400e') : '#065f46');
             const fecha = m.salidaFormateada || m.salidaTimestamp;
             const motivoExtra = m.motivo_otro ? ` (${m.motivo_otro})` : '';
             const duracionMostrar = m.duracion ? ` ⏱️${m.duracion}` : '';
@@ -1054,6 +1159,28 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     }
   }
 
+  // Resalta visualmente la acción activa (Salida o Entrada)
+  function marcarAccionActiva(accion) {
+    const btnSalida = document.getElementById('btnAccionSalida');
+    const btnEntrada = document.getElementById('btnAccionEntrada');
+    if (!btnSalida || !btnEntrada) return;
+    if (accion === 'salida') {
+      btnSalida.style.opacity = '1';
+      btnSalida.style.outline = '3px solid #1E3A8A';
+      btnSalida.style.boxShadow = '0 0 0 2px #fff, 0 0 0 5px #1E3A8A';
+      btnEntrada.style.opacity = '0.45';
+      btnEntrada.style.outline = 'none';
+      btnEntrada.style.boxShadow = 'none';
+    } else {
+      btnEntrada.style.opacity = '1';
+      btnEntrada.style.outline = '3px solid #1E3A8A';
+      btnEntrada.style.boxShadow = '0 0 0 2px #fff, 0 0 0 5px #1E3A8A';
+      btnSalida.style.opacity = '0.45';
+      btnSalida.style.outline = 'none';
+      btnSalida.style.boxShadow = 'none';
+    }
+  }
+
   // Abrir modal (default: Registrar Salida)
   document.getElementById('btnAbrirSalidas').addEventListener('click', () => {
     const modal = document.getElementById('modalSalidasFull');
@@ -1062,12 +1189,15 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     document.getElementById('campoOtroMotivo').style.display = 'none';
     document.getElementById('inputSalidaFull').value = '';
     document.getElementById('textoOtroMotivo').value = '';
+    const chkRegresa = document.getElementById('chkRegresa');
+    if (chkRegresa) chkRegresa.checked = true;
     // Default: Registrar Salida
     const seccionMotivo = document.getElementById('seccion-motivo');
     seccionMotivo.style.display = 'block';
     document.getElementById('modalSalidasFull').dataset.accion = 'salida';
     const btnConfirm = document.getElementById('btnConfirmarSalidaEntrada');
     btnConfirm.textContent = '✅ Confirmar Salida';
+    marcarAccionActiva('salida');
     // Limpiar selección de motivo
     document.querySelectorAll('.boton-motivo').forEach(b => b.style.borderColor = '#e5e7eb');
     // Cargar datos actualizados
@@ -1113,6 +1243,7 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     document.getElementById('modalSalidasFull').dataset.accion = 'salida';
     const btnConfirm = document.getElementById('btnConfirmarSalidaEntrada');
     btnConfirm.textContent = '✅ Confirmar Salida';
+    marcarAccionActiva('salida');
     document.querySelectorAll('.boton-motivo').forEach(b => b.style.borderColor = '#e5e7eb');
     document.getElementById('inputSalidaFull').focus();
   });
@@ -1123,10 +1254,11 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     document.getElementById('modalSalidasFull').dataset.accion = 'entrada';
     const btnConfirm = document.getElementById('btnConfirmarSalidaEntrada');
     btnConfirm.textContent = '✅ Confirmar Entrada';
+    marcarAccionActiva('entrada');
     document.getElementById('inputSalidaFull').focus();
   });
 
-  // Selección de motivo (Baño, Enfermería, Otro)
+  // Selección de motivo (Baño, Otro)
   document.querySelectorAll('.boton-motivo').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.boton-motivo').forEach(b => b.style.borderColor = '#e5e7eb');
@@ -1192,6 +1324,12 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
       let response;
       if (accion === 'salida') {
         const motivoOtro = (motivo === 'Otro') ? document.getElementById('textoOtroMotivo').value.trim() : '';
+        // Baño siempre regresa; "Otro" depende del checkbox "¿Va a regresar?"
+        let vaARegresar = true;
+        if (motivo === 'Otro') {
+          const chkRegresa = document.getElementById('chkRegresa');
+          vaARegresar = chkRegresa ? chkRegresa.checked : true;
+        }
         response = await fetch(API_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -1201,7 +1339,8 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
             idClase: claseActiva.idClase,
             curpAlumno: curp,
             motivo: motivo,
-            motivoOtro: motivoOtro
+            motivoOtro: motivoOtro,
+            vaARegresar: vaARegresar ? 'true' : 'false'
           })
         });
       } else {
@@ -1224,9 +1363,15 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
         input.value = '';
         document.getElementById('seccion-motivo').style.display = 'none';
         document.getElementById('campoOtroMotivo').style.display = 'none';
-        document.getElementById('textoOtroMotivo').value = '';
+        // Respetar la casilla "Mantener" para el texto del motivo "Otro"
+        const chkMantenerMotivo = document.getElementById('chkMantenerMotivo');
+        if (!chkMantenerMotivo || !chkMantenerMotivo.checked) {
+          document.getElementById('textoOtroMotivo').value = '';
+        }
         document.getElementById('modalSalidasFull').dataset.motivo = '';
         document.querySelectorAll('.boton-motivo').forEach(b => b.style.borderColor = '#e5e7eb');
+        const chkRegresa = document.getElementById('chkRegresa');
+        if (chkRegresa) chkRegresa.checked = true;
         if (accion === 'entrada') {
           btnConfirm.textContent = '✅ Confirmar Entrada';
         } else {
@@ -1275,20 +1420,24 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
       { facingMode: "environment" },
       config,
       (decodedText) => {
-        // Debounce: solo procesar si ha pasado al menos 2 segundos
-        const ahora = Date.now();
-        if (ahora - ultimoEscaneoQR < 2000) return;
-        ultimoEscaneoQR = ahora;
-
-        const curp = decodedText.trim().toUpperCase();
-        document.getElementById('inputSalidaFull').value = curp;
-        // Opcional: cerrar cámara automáticamente después de leer
+        // Cerrar cámara INMEDIATAMENTE para no leer el mismo código repetido
         if (qrReaderSalidaFull) {
           qrReaderSalidaFull.stop().catch(() => {});
           qrReaderSalidaFull = null;
-          readerContainer.style.display = 'none';
-          document.getElementById('btnEscanearSalidaFull').textContent = '📷 QR';
         }
+        readerContainer.style.display = 'none';
+        document.getElementById('btnEscanearSalidaFull').textContent = '📷 QR';
+
+        const curp = decodedText.trim().toUpperCase();
+        const alumno = alumnosGrupo.find(a => a.curp === curp);
+        if (alumno) {
+          document.getElementById('inputSalidaFull').value = alumno.nombreCompleto;
+          SIREI.utils.mostrarToast('👤 ' + alumno.nombreCompleto);
+        } else {
+          document.getElementById('inputSalidaFull').value = curp;
+          SIREI.utils.mostrarToast('CURP escaneado: ' + curp, 'warning');
+        }
+        if (navigator.vibrate) navigator.vibrate(50);
       },
       (err) => {}
     );
