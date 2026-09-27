@@ -256,6 +256,7 @@ window.cargarResultadosDocente = async function(container) {
         { id: 'actitudinal', icono: '😊', nombre: 'Actitudinal' },
         { id: 'academico', icono: '📚', nombre: 'Académico' },
         { id: 'calificaciones', icono: '🎯', nombre: 'Calificaciones finales' },
+        { id: 'salidas', icono: '🚪', nombre: 'Salidas y Entradas' },
         { id: 'tops', icono: '🏆', nombre: 'Tops / Podium' }
       ];
       const botonesAspecto = aspectos.map(a =>
@@ -449,6 +450,7 @@ window.cargarResultadosDocente = async function(container) {
       if (aspectoSeleccionado === 'actitudinal') return renderActitudinal();
       if (aspectoSeleccionado === 'academico') return renderAcademico();
       if (aspectoSeleccionado === 'calificaciones') return renderCalificaciones();
+      if (aspectoSeleccionado === 'salidas') return renderSalidas();
       tablaDiv.innerHTML = '';
     }
 
@@ -1057,6 +1059,59 @@ window.cargarResultadosDocente = async function(container) {
       }
     }
 
+    // ==================== SALIDAS Y ENTRADAS (P6) ====================
+    function renderSalidas() {
+      let salidas = (datos.salidas || []).slice();
+      // Ordenar por fecha de salida más reciente
+      salidas.sort(function(a, b) { return String(b.salida || '') > String(a.salida || '') ? 1 : -1; });
+      if (salidas.length === 0) {
+        tablaHtml('<p style="color:#6b7280;">No hay salidas registradas para este grupo/asignatura/periodo.</p>');
+        return;
+      }
+      const filas = salidas.map(function(s) {
+        const estado = s.estado || '';
+        let entradaTxt = s.entrada || '';
+        let entradaHtml = '';
+        let durHtml = '';
+        if (estado === 'Dentro') {
+          entradaHtml = '<span>' + escapeAttr(entradaTxt || '—') + '</span>';
+          durHtml = s.duracion
+            ? '<span style="font-weight:700; color:#059669;">⏱️ ' + escapeAttr(s.duracion) + '</span>'
+            : '<span style="color:#9ca3af;">—</span>';
+        } else if (estado === 'Fuera') {
+          entradaHtml = '<span style="font-weight:700; color:#f59e0b;">Aún fuera</span>';
+          durHtml = '<span style="color:#6b7280;">—</span>';
+        } else {
+          entradaHtml = '<span style="font-weight:700; color:#6b7280;">' + (estado === 'Escape' ? 'Escape' : escapeAttr(estado || 'Sin regreso')) + '</span>';
+          durHtml = s.duracion
+            ? '<span style="font-weight:600;">⏱️ ' + escapeAttr(s.duracion) + '</span>'
+            : '<span style="color:#6b7280;">Sin regreso</span>';
+        }
+        const motivoTxt = escapeAttr(s.motivo || '') + (s.motivo_otro ? ' (' + escapeAttr(s.motivo_otro) + ')' : '');
+        return '<tr style="border-bottom:1px solid #f3f4f6;">'
+          + '<td style="padding:8px 10px;">' + escapeAttr(s.nombreAlumno || s.curp) + '</td>'
+          + '<td style="padding:8px 10px; font-size:0.82rem; white-space:nowrap;">' + escapeAttr(s.salida || '—') + '</td>'
+          + '<td style="padding:8px 10px; font-size:0.82rem; white-space:nowrap;">' + entradaHtml + '</td>'
+          + '<td style="padding:8px 10px; text-align:center; font-size:0.85rem;">' + durHtml + '</td>'
+          + '<td style="padding:8px 10px; font-size:0.85rem;">' + (motivoTxt || '—') + '</td>'
+          + '<td style="padding:8px 10px; text-align:center; font-size:0.82rem;">' + escapeAttr(estado) + '</td>'
+          + '</tr>';
+      }).join('');
+      tablaHtml(
+        '<p style="margin:0 0 10px 0; color:#4b5563;"><strong>' + salidas.length + '</strong> movimiento(s) · ' + escapeAttr(datos.nombres.asignatura) + ' · ' + escapeAttr(datos.nombres.periodo) + ' · ordenados por fecha más reciente</p>'
+        + '<div style="max-height:60vh; overflow:auto; border:1px solid #e5e7eb; border-radius:10px;">'
+        + '<table style="width:100%; border-collapse:collapse;">'
+        + '<thead><tr style="background:#f9fafb; position:sticky; top:0;">'
+        + '<th style="padding:10px; text-align:left;">Alumno</th>'
+        + '<th style="padding:10px; text-align:left;">Salida</th>'
+        + '<th style="padding:10px; text-align:left;">Entrada</th>'
+        + '<th style="padding:10px; text-align:center;">Duración</th>'
+        + '<th style="padding:10px; text-align:left;">Motivo</th>'
+        + '<th style="padding:10px; text-align:center;">Estado</th>'
+        + '</tr></thead><tbody>' + filas + '</tbody></table></div>'
+      );
+    }
+
     // ==================== VISTA INDIVIDUAL DE ALUMNO ====================
     function renderAlumnoIndividual(curp) {
       const alumnos = (datos.alumnos || []);
@@ -1159,6 +1214,23 @@ window.cargarResultadosDocente = async function(container) {
         htmlFinal += `<tr style="border-bottom:1px solid #f3f4f6;"><td style="padding:6px 10px;">Definitiva</td><td style="padding:6px 10px; font-weight:700;">${regFinal.definitiva != null && regFinal.definitiva !== '' ? escapeAttr(regFinal.definitiva) : '—'}</td></tr>`;
       }
 
+      // --- Salidas y entradas del alumno ---
+      const salidasInd = ((datos.salidas || []).filter(s => s.curp === curp)).sort(function(a, b) { return String(b.salida || '') > String(a.salida || '') ? 1 : -1; });
+      const filasSalidasInd = salidasInd.map(function(s) {
+        const est = s.estado || '';
+        let ent = '—', dur = '—';
+        if (est === 'Dentro') { ent = s.entrada || '—'; dur = s.duracion ? ('⏱️ ' + s.duracion) : '—'; }
+        else if (est === 'Fuera') { ent = 'Aún fuera'; dur = '—'; }
+        else { ent = est || 'Sin regreso'; dur = s.duracion ? ('⏱️ ' + s.duracion) : 'Sin regreso'; }
+        const mot = escapeAttr(s.motivo || '') + (s.motivo_otro ? ' (' + escapeAttr(s.motivo_otro) + ')' : '');
+        return '<tr style="border-bottom:1px solid #f3f4f6;">'
+          + '<td style="padding:6px 10px; font-size:0.85rem;">' + escapeAttr(s.salida || '—') + '</td>'
+          + '<td style="padding:6px 10px; font-size:0.85rem;">' + escapeAttr(ent) + '</td>'
+          + '<td style="padding:6px 10px; font-size:0.85rem;">' + escapeAttr(dur) + '</td>'
+          + '<td style="padding:6px 10px; font-size:0.85rem;">' + (mot || '—') + '</td>'
+          + '<td style="padding:6px 10px; font-size:0.85rem;">' + escapeAttr(est) + '</td></tr>';
+      }).join('');
+
       tablaHtml(`
         <div style="background:#f0f7ff; border:1px solid #bcd8f5; border-radius:8px; padding:12px; margin-bottom:14px;">
           <p style="margin:0; font-size:1.05rem;"><strong>👤 ${escapeAttr(alumno.nombreCompleto)}</strong></p>
@@ -1190,10 +1262,18 @@ window.cargarResultadosDocente = async function(container) {
         </div>
 
         <h4 style="margin:14px 0 6px 0;">🎯 Calificaciones por periodo</h4>
-        <div style="max-height:200px; overflow-y:auto; border:1px solid #e5e7eb; border-radius:8px;">
+        <div style="max-height:200px; overflow-y:auto; border:1px solid #e5e7eb; border-radius:8px; margin-bottom:8px;">
           <table style="width:100%; border-collapse:collapse;">
             <thead><tr style="background:#f9fafb;"><th style="padding:6px 10px; text-align:left;">Periodo</th><th style="padding:6px 10px; text-align:left;">Calificación</th></tr></thead>
             <tbody>${filasCal}${htmlFinal}</tbody>
+          </table>
+        </div>
+
+        <h4 style="margin:14px 0 6px 0;">🚪 Salidas y entradas</h4>
+        <div style="max-height:200px; overflow-y:auto; border:1px solid #e5e7eb; border-radius:8px;">
+          <table style="width:100%; border-collapse:collapse;">
+            <thead><tr style="background:#f9fafb;"><th style="padding:6px 10px; text-align:left;">Salida</th><th style="padding:6px 10px; text-align:left;">Entrada</th><th style="padding:6px 10px; text-align:left;">Duración</th><th style="padding:6px 10px; text-align:left;">Motivo</th><th style="padding:6px 10px; text-align:left;">Estado</th></tr></thead>
+            <tbody>${filasSalidasInd || '<tr><td colspan="5" style="padding:6px 10px; color:#6b7280;">Sin salidas registradas</td></tr>'}</tbody>
           </table>
         </div>
       `);
@@ -1240,6 +1320,14 @@ window.cargarResultadosDocente = async function(container) {
               <option value="personalizada">Personalizada</option>
             </select>
           </div>
+          <div>
+            <label style="font-weight:500;">Records de salidas:</label>
+            <select id="selectTopSalidas" style="width:100%; padding:10px; border-radius:8px; border:1px solid #d1d5db; margin-top:4px;">
+              <option value="salidas_total">Más salidas (cantidad)</option>
+              <option value="tiempo_fuera_seg">Más tiempo acumulado fuera</option>
+              <option value="escapes">Más escapes</option>
+            </select>
+          </div>
         </div>
         <div id="topContenido"><div class="loader-moderno"><div class="spinner"></div><p>Cargando tops...</p></div></div>
       `;
@@ -1249,6 +1337,7 @@ window.cargarResultadosDocente = async function(container) {
         const idGrupo = document.getElementById('selectTopGrupo').value;
         const topN = parseInt(document.getElementById('selectTopN').value, 10) || 5;
         const tipoActitud = document.getElementById('selectTopTipoActitud').value;
+        const topSalidasKey = document.getElementById('selectTopSalidas').value || 'salidas_total';
 
         const cont = document.getElementById('topContenido');
         cont.innerHTML = '<div class="loader-moderno"><div class="spinner"></div><p>Cargando tops...</p></div>';
@@ -1276,6 +1365,12 @@ window.cargarResultadosDocente = async function(container) {
             { titulo: '😊 Más asignaciones actitudinales (' + tipoActitud + ')', key: 'actitudes_total' },
             { titulo: '📚 Mejores resultados académicos (más entregas)', key: 'entregas' }
           ];
+          const titulosSalidas = {
+            salidas_total: '🚪 Records de salidas: más salidas (cantidad)',
+            tiempo_fuera_seg: '⏱️ Records de salidas: más tiempo acumulado fuera (HH:MM:SS)',
+            escapes: '🏃 Records de salidas: más escapes'
+          };
+          tops.push({ titulo: titulosSalidas[topSalidasKey] || '🚪 Records de salidas', key: topSalidasKey, esTiempo: topSalidasKey === 'tiempo_fuera_seg' });
 
           function ordinal(i) {
             if (i === 1) return '1°';
@@ -1286,15 +1381,18 @@ window.cargarResultadosDocente = async function(container) {
 
           function tarjeta(top) {
             const lista = alumnos.slice().sort((a, b) => (b[top.key] || 0) - (a[top.key] || 0)).slice(0, topN);
-            const filas = lista.map((a, i) => `
+            const filas = lista.map((a, i) => {
+              const valor = top.esTiempo ? (a.tiempo_fuera_txt || '00:00:00') : (a[top.key] || 0);
+              return `
               <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border-bottom:1px solid #f3f4f6;">
                 <span style="font-weight:800; color:#1E3A8A; min-width:34px;">${ordinal(i + 1)}</span>
                 <div style="flex:1;">
                   <div style="font-weight:600;">${escapeAttr(a.nombre)}</div>
                   <div style="font-size:0.75rem; color:#6b7280;">${escapeAttr(a.grupo)}</div>
                 </div>
-                <span style="font-weight:700; color:#10b981;">${a[top.key] || 0}</span>
-              </div>`).join('');
+                <span style="font-weight:700; color:#10b981;">${escapeAttr(valor)}</span>
+              </div>`;
+            }).join('');
             return `
               <div style="background:white; border:1px solid #e5e7eb; border-radius:10px; padding:10px 14px; margin-bottom:12px;">
                 <h4 style="margin:0 0 6px 0; font-size:0.98rem;">${top.titulo}</h4>
@@ -1312,6 +1410,7 @@ window.cargarResultadosDocente = async function(container) {
       document.getElementById('selectTopGrupo').addEventListener('change', cargarTops);
       document.getElementById('selectTopN').addEventListener('change', cargarTops);
       document.getElementById('selectTopTipoActitud').addEventListener('change', cargarTops);
+      document.getElementById('selectTopSalidas').addEventListener('change', cargarTops);
 
       await cargarTops();
     }
