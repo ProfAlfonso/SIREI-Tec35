@@ -243,6 +243,22 @@ async function cargarInicio(containerParam) {
 //  SECCIÓN 4: MOSTRAR PANELES CUANDO HAY CLASE ACTIVA
 // ============================================================
 
+// Nombre del alumno según orden: 'apellido' -> "ApellidoP ApellidoM Nombres",
+// 'nombre' -> "Nombres ApellidoP ApellidoM". Con fallback a nombreCompleto.
+function formatoNombreAlumno(a, orden) {
+  if (!a) return '';
+  const nom = (a.nombres || '').trim();
+  const apP = (a.apellidoPaterno || '').trim();
+  const apM = (a.apellidoMaterno || '').trim();
+  if (!nom && !apP && !apM) return a.nombreCompleto || '';
+  if (orden === 'apellido') {
+    const t = [apP, apM, nom].filter(Boolean).join(' ');
+    return t || a.nombreCompleto;
+  }
+  const t = [nom, apP, apM].filter(Boolean).join(' ');
+  return t || a.nombreCompleto;
+}
+
 async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grupos, asignaturas, token) {
   const grupo = grupos.find(g => g.id == claseActiva.idGrupo);
   const asignatura = asignaturas.find(a => a.id === claseActiva.idAsignatura);
@@ -341,9 +357,11 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
 <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 12px; background:#f8fafc; border-bottom:1px solid #e5e7eb; flex-shrink:0; min-height:40px;">
   <h2 style="margin:0; font-size:0.95rem; display:flex; align-items:center; gap:6px;">
     <span style="font-size:1.2rem;">🚪</span> Entradas / Salidas
+    <span id="iconoBano" title="Estado del baño" style="font-size:1.1rem; margin-left:4px;">🚻✅</span>
   </h2>
   <button id="btnCerrarSalidasFull" style="background:none; border:none; font-size:1.3rem; cursor:pointer; padding:0 6px;">✕</button>
 </div>
+      <div id="confirmacionSalidaEntrada" style="display:none;"></div>
 
       <!-- Contenido del modal (scrollable) -->
       <div style="padding:16px 20px; flex:1; overflow-y:auto;">
@@ -556,7 +574,7 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
           const asist = asistencias.find(a => a.curp === alumno.curp);
           const estadoActual = asist ? asist.estado : 'Pendiente';
           return `<div class="alumno-item" data-curp="${alumno.curp}">
-            <span>${SIREI.utils.escapeHtml(alumno.nombreCompleto)}</span>
+            <span>${SIREI.utils.escapeHtml(formatoNombreAlumno(alumno, 'apellido'))}</span>
             <select class="select-estado-manual" data-curp="${alumno.curp}">
               <option value="Presente" ${estadoActual === 'Presente' ? 'selected' : ''}>Presente</option>
               <option value="Retardo" ${estadoActual === 'Retardo' ? 'selected' : ''}>Retardo</option>
@@ -574,23 +592,33 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
         const estado = asist ? asist.estado : 'Pendiente';
         const color = estado === 'Presente' ? '#10b981' : estado === 'Retardo' ? '#f59e0b' : estado === 'Ausente' ? '#ef4444' : '#6b7280';
         return `<div data-curp="${alumno.curp}" style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid #f3f4f6; font-size:0.9rem;">
-          <span>${SIREI.utils.escapeHtml(alumno.nombreCompleto)}</span>
+          <span>${SIREI.utils.escapeHtml(formatoNombreAlumno(alumno, 'apellido'))}</span>
           <span style="color:${color}; font-weight:600;">${estado}</span>
         </div>`;
       }).join('')}
+    </div>
+    <div style="display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;">
+      <select id="filtroWhatsApp" style="flex:1; min-width:160px; padding:10px; border-radius:8px; border:1px solid #d1d5db;">
+        <option value="todos">Todos</option>
+        <option value="Presente">Solo los presentes</option>
+        <option value="Ausente">Solo los ausentes</option>
+        <option value="Pendiente">Solo los pendientes</option>
+        <option value="Retardo">Solo los retardos</option>
+      </select>
+      <button id="btnEnviarWhatsApp" class="btn btn-primary" style="flex:2; min-width:200px; background:#25D366; border:none;">📲 Enviar por WhatsApp</button>
     </div>
   `;
   contenedorAsistencia.innerHTML = modalQR;
 
   // ---- Configurar eventos (incluyendo las mejoras de QR y modal) ----
-  configurarEventosPaneles(container, idDocente, claseActiva, token, alumnosGrupo);
+  configurarEventosPaneles(container, idDocente, claseActiva, token, alumnosGrupo, grupo, asignatura);
 }
 
 // ============================================================
 //  SECCIÓN 4.5: EVENTOS DE LOS PANELES (CORREGIDO)
 // ============================================================
 
-function configurarEventosPaneles(container, idDocente, claseActiva, token, alumnosGrupo) {
+function configurarEventosPaneles(container, idDocente, claseActiva, token, alumnosGrupo, grupoInfo, asignaturaInfo) {
   let qrReaderAsistencia = null;
   let qrReaderSalidaFull = null;
   let escaneoActivo = false;
@@ -612,6 +640,43 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     return alumnosGrupo.slice().sort(compararAlumnos);
   }
 
+  // Nombre a mostrar según el orden activo (apellido-primero o nombre-primero)
+  function nombreParaMostrar(a) {
+    return formatoNombreAlumno(a, ordenAsistencia);
+  }
+
+  // Todas las variantes de nombre para búsqueda (tolerante al orden mostrado)
+  function variantesNombre(a) {
+    const v = [a.nombreCompleto, formatoNombreAlumno(a, 'apellido'), formatoNombreAlumno(a, 'nombre')];
+    return v.filter(Boolean);
+  }
+
+  function buscarAlumnoPorTexto(valor) {
+    const v = String(valor || '').trim();
+    if (!v) return null;
+    let al = alumnosGrupo.find(a => a.curp === v.toUpperCase());
+    if (al) return al;
+    const low = v.toLowerCase();
+    return alumnosGrupo.find(a => variantesNombre(a).some(x => String(x).toLowerCase().includes(low))) || null;
+  }
+
+  // Actualiza los textos de nombres en lista manual y resumen según el orden activo
+  function actualizarNombresAsistencia() {
+    const mapaNombres = {};
+    alumnosGrupo.forEach(a => { mapaNombres[a.curp] = nombreParaMostrar(a); });
+    document.querySelectorAll('.lista-alumnos-manual .alumno-item').forEach(item => {
+      const span = item.querySelector('span');
+      if (span && mapaNombres[item.dataset.curp]) span.textContent = mapaNombres[item.dataset.curp];
+    });
+    const resumen = document.getElementById('resumen-asistencia');
+    if (resumen) {
+      resumen.querySelectorAll('div[data-curp]').forEach(row => {
+        const span = row.querySelector('span:first-child');
+        if (span && mapaNombres[row.dataset.curp]) span.textContent = mapaNombres[row.dataset.curp];
+      });
+    }
+  }
+
   // Reordena la lista manual y el resumen sin perder los estados ya seleccionados
   function reordenarAsistencia() {
     const ordenados = alumnosOrdenados();
@@ -631,7 +696,7 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
 
     const resumen = document.getElementById('resumen-asistencia');
     if (resumen) {
-      const rows = Array.from(resumen.children);
+      const rows = Array.from(resumen.querySelectorAll('div[data-curp]'));
       rows.sort((x, y) => {
         const ix = mapaOrden[x.dataset.curp] != null ? mapaOrden[x.dataset.curp] : 9999;
         const iy = mapaOrden[y.dataset.curp] != null ? mapaOrden[y.dataset.curp] : 9999;
@@ -639,13 +704,15 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
       });
       rows.forEach(r => resumen.appendChild(r));
     }
+
+    actualizarNombresAsistencia();
   }
 
   // ---- Función para actualizar contadores ----
   function actualizarContadores() {
     const resumenDiv = document.getElementById('resumen-asistencia');
     if (!resumenDiv) return;
-    const items = resumenDiv.querySelectorAll('div');
+    const items = resumenDiv.querySelectorAll('div[data-curp]');
     let conteos = { Presente: 0, Retardo: 0, Ausente: 0, Pendiente: 0 };
     items.forEach(item => {
       const estadoSpan = item.querySelector('span:last-child');
@@ -660,39 +727,32 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     });
   }
 
-  // ---- Sincronizar selectores con resumen ----
+  // ---- Sincronizar selectores con resumen (por CURP, tolerante al formato de nombre) ----
   function sincronizarSelectores() {
     const resumenDiv = document.getElementById('resumen-asistencia');
     if (!resumenDiv) return;
-    const items = resumenDiv.querySelectorAll('div');
+    const items = resumenDiv.querySelectorAll('div[data-curp]');
     for (const item of items) {
-      const spanNombre = item.querySelector('span:first-child');
       const spanEstado = item.querySelector('span:last-child');
-      if (spanNombre && spanEstado) {
-        const nombreCompleto = spanNombre.textContent.trim();
-        const alumno = alumnosGrupo.find(a => a.nombreCompleto === nombreCompleto);
-        if (alumno) {
-          const select = document.querySelector(`.select-estado-manual[data-curp="${alumno.curp}"]`);
-          if (select) select.value = spanEstado.textContent;
-        }
+      if (spanEstado && item.dataset.curp) {
+        const select = document.querySelector(`.select-estado-manual[data-curp="${item.dataset.curp}"]`);
+        if (select) select.value = spanEstado.textContent.trim();
       }
     }
   }
 
   // ---- Actualizar estado de un alumno ----
   function actualizarEstadoAlumno(curp, nuevoEstado) {
-    // Actualizar resumen
+    // Actualizar resumen (búsqueda por CURP, no por texto del nombre)
     const resumenDiv = document.getElementById('resumen-asistencia');
     if (resumenDiv) {
-      const items = resumenDiv.querySelectorAll('div');
-      for (const item of items) {
-        const spanNombre = item.querySelector('span:first-child');
-        const spanEstado = item.querySelector('span:last-child');
-        if (spanNombre && spanNombre.textContent.trim() === alumnosGrupo.find(a => a.curp === curp)?.nombreCompleto) {
+      const row = resumenDiv.querySelector(`div[data-curp="${curp}"]`);
+      if (row) {
+        const spanEstado = row.querySelector('span:last-child');
+        if (spanEstado) {
           const color = nuevoEstado === 'Presente' ? '#10b981' : nuevoEstado === 'Retardo' ? '#f59e0b' : nuevoEstado === 'Ausente' ? '#ef4444' : '#6b7280';
           spanEstado.textContent = nuevoEstado;
           spanEstado.style.color = color;
-          break;
         }
       }
     }
@@ -717,7 +777,7 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     });
   });
 
-  // ---- 1.1 ORDEN DE LA LISTA (apellido / nombre) ----
+  // ---- 1.1 ORDEN DE LA LISTA (apellido / nombre). P10: default apellido paterno ----
   const btnOrden = document.getElementById('btnOrdenAsistencia');
   if (btnOrden) {
     btnOrden.addEventListener('click', () => {
@@ -725,6 +785,67 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
       btnOrden.textContent = (ordenAsistencia === 'apellido') ? '🔤 Apellido' : '🔤 Nombre';
       reordenarAsistencia();
       SIREI.utils.mostrarToast('Orden: ' + (ordenAsistencia === 'apellido' ? 'apellido paterno' : 'nombre'), 'warning');
+    });
+  }
+
+  // ---- 1.2 ENVIAR POR WHATSAPP (filtros + resumen + formato; respeta orden actual) ----
+  const btnWhats = document.getElementById('btnEnviarWhatsApp');
+  if (btnWhats) {
+    btnWhats.addEventListener('click', () => {
+      const nombreAsignatura = (asignaturaInfo && asignaturaInfo.nombre) || claseActiva.idAsignatura || 'Asignatura';
+      const nombreGrupo = (grupoInfo && grupoInfo.nombre) || '';
+      const nombreProfesor = sessionStorage.getItem('sirei_nombre') || sessionStorage.getItem('sirei_user') || '';
+      const ahora = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      const fechaHora = pad(ahora.getDate()) + '/' + pad(ahora.getMonth() + 1) + '/' + ahora.getFullYear() + ' ' + pad(ahora.getHours()) + ':' + pad(ahora.getMinutes());
+      const filtroSel = document.getElementById('filtroWhatsApp');
+      const filtro = filtroSel ? filtroSel.value : 'todos';
+      // Mapa curp -> estado actual del resumen (incluye cambios QR/manual sin guardar)
+      const mapaEstados = {};
+      const resumenDiv = document.getElementById('resumen-asistencia');
+      if (resumenDiv) {
+        resumenDiv.querySelectorAll('div[data-curp]').forEach(row => {
+          const curp = row.dataset.curp;
+          const spanEstado = row.querySelector('span:last-child');
+          if (curp && spanEstado) mapaEstados[curp] = (spanEstado.textContent || '').trim() || 'Pendiente';
+        });
+      }
+      const ordenados = alumnosOrdenados();
+      let cPres = 0, cRet = 0, cAus = 0, cPen = 0;
+      ordenados.forEach(a => {
+        const est = mapaEstados[a.curp] || 'Pendiente';
+        if (est === 'Presente') cPres++;
+        else if (est === 'Retardo') cRet++;
+        else if (est === 'Ausente') cAus++;
+        else if (est === 'Pendiente') cPen++;
+      });
+      const total = ordenados.length;
+      // Limpia caracteres de formato de WhatsApp en nombres para no romper el mensaje
+      const limpiarWA = (s) => String(s == null ? '' : s).replace(/[*_~`]/g, '').trim();
+      const formatoEstado = (est) => {
+        if (est === 'Ausente') return '*Ausente*';
+        if (est === 'Pendiente') return '_Pendiente_';
+        return est;
+      };
+      const etiquetasFiltro = { todos: 'Todos', Presente: 'Solo presentes', Ausente: 'Solo ausentes', Pendiente: 'Solo pendientes', Retardo: 'Solo retardos' };
+      const lineas = ordenados
+        .filter(a => (filtro === 'todos') || ((mapaEstados[a.curp] || 'Pendiente') === filtro))
+        .map(a => {
+          const est = mapaEstados[a.curp] || 'Pendiente';
+          return '- ' + limpiarWA(nombreParaMostrar(a)) + ': ' + formatoEstado(est);
+        });
+      const mensaje = 'Asignatura: ' + nombreAsignatura + '\n'
+        + 'Profesor: ' + nombreProfesor + '\n'
+        + 'Fecha: ' + fechaHora + '\n'
+        + 'Grupo: ' + nombreGrupo + '\n'
+        + '✅ Presentes: ' + cPres + '\n'
+        + '⏰ Retardo: ' + cRet + '\n'
+        + '❌ Ausentes: ' + cAus + '\n'
+        + '⏳ Pendientes: ' + cPen + '\n'
+        + '👥 Total: ' + total + '\n'
+        + 'Asistencia (' + (etiquetasFiltro[filtro] || 'Todos') + '):\n'
+        + (lineas.length > 0 ? lineas.join('\n') : '(Sin alumnos en este filtro)');
+      window.open('https://wa.me/?text=' + encodeURIComponent(mensaje), '_blank');
     });
   }
 
@@ -781,7 +902,7 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
         const chkRetardo = document.getElementById('chkRetardo');
         const estado = chkRetardo && chkRetardo.checked ? 'Retardo' : 'Presente';
         const tipoToast = estado === 'Retardo' ? 'warning' : 'success';
-        SIREI.utils.mostrarToast(`${alumno.nombreCompleto} - ${estado}`, tipoToast);
+        SIREI.utils.mostrarToast(`${nombreParaMostrar(alumno)} - ${estado}`, tipoToast);
 
         // Actualizar vista
         actualizarEstadoAlumno(curp, estado);
@@ -832,11 +953,7 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
       SIREI.utils.mostrarToast('Ingresa CURP o nombre del alumno.', 'error');
       return;
     }
-    let alumno = alumnosGrupo.find(a => a.curp === valor.toUpperCase());
-    if (!alumno) {
-      const nombreLower = valor.toLowerCase();
-      alumno = alumnosGrupo.find(a => a.nombreCompleto.toLowerCase().includes(nombreLower));
-    }
+    const alumno = buscarAlumnoPorTexto(valor);
     if (!alumno) {
       SIREI.utils.mostrarToast('Alumno no encontrado en este grupo.', 'error');
       return;
@@ -845,7 +962,7 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     const chkRetardo = document.getElementById('chkRetardo');
     const estado = chkRetardo && chkRetardo.checked ? 'Retardo' : 'Presente';
     const tipoToast = estado === 'Retardo' ? 'warning' : 'success';
-    SIREI.utils.mostrarToast(`${alumno.nombreCompleto} - ${estado}`, tipoToast);
+    SIREI.utils.mostrarToast(`${nombreParaMostrar(alumno)} - ${estado}`, tipoToast);
 
     actualizarEstadoAlumno(curp, estado);
 
@@ -908,22 +1025,17 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
       actualizaciones[curp] = estado;
     }
 
-    // Actualizar vista local inmediatamente
+    // Actualizar vista local inmediatamente (por CURP, tolerante al formato de nombre)
     const resumenDiv = document.getElementById('resumen-asistencia');
     if (resumenDiv) {
-      const items = resumenDiv.querySelectorAll('div');
+      const items = resumenDiv.querySelectorAll('div[data-curp]');
       items.forEach(item => {
-        const spanNombre = item.querySelector('span:first-child');
         const spanEstado = item.querySelector('span:last-child');
-        if (spanNombre && spanEstado) {
-          const nombreCompleto = spanNombre.textContent.trim();
-          const alumno = alumnosGrupo.find(a => a.nombreCompleto === nombreCompleto);
-          if (alumno && actualizaciones[alumno.curp] !== undefined) {
-            const nuevoEstado = actualizaciones[alumno.curp];
-            const color = nuevoEstado === 'Presente' ? '#10b981' : nuevoEstado === 'Retardo' ? '#f59e0b' : nuevoEstado === 'Ausente' ? '#ef4444' : '#6b7280';
-            spanEstado.textContent = nuevoEstado;
-            spanEstado.style.color = color;
-          }
+        if (spanEstado && actualizaciones[item.dataset.curp] !== undefined) {
+          const nuevoEstado = actualizaciones[item.dataset.curp];
+          const color = nuevoEstado === 'Presente' ? '#10b981' : nuevoEstado === 'Retardo' ? '#f59e0b' : nuevoEstado === 'Ausente' ? '#ef4444' : '#6b7280';
+          spanEstado.textContent = nuevoEstado;
+          spanEstado.style.color = color;
         }
       });
       actualizarContadores();
@@ -1001,6 +1113,16 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
         const todas = dataFuera.salidas || [];
         const fuera = todas.filter(s => s.estado === 'Fuera');
         const fueraDefinitivo = todas.filter(s => s.estado === 'Fuera definitivo');
+        // P4: icono de baño (solo cuenta Fuera con regreso; Fuera definitivo nunca es baño)
+        try {
+          const banoOcupado = fuera.some(s => String(s.motivo || '').toLowerCase() === 'baño');
+          const iconoBano = document.getElementById('iconoBano');
+          if (iconoBano) {
+            iconoBano.textContent = banoOcupado ? '🚻🚫' : '🚻✅';
+            iconoBano.style.color = banoOcupado ? '#dc2626' : '#16a34a';
+            iconoBano.title = banoOcupado ? 'Baño ocupado' : 'Baño desocupado';
+          }
+        } catch (e) {}
 
         // Limpiar cronómetro anterior
         if (window._intervalSalida) {
@@ -1014,14 +1136,15 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
         } else {
           let html = '';
 
-          // Alumnos que no regresan: sin cronómetro y no bloquean otras salidas
+          // Salidas definitivas: sin cronómetro, no esperan entrada y no bloquean otras salidas
           fueraDefinitivo.forEach(sd => {
             const alumnoD = alumnosGrupo.find(a => a.curp === sd.curp);
-            const nombreD = alumnoD ? SIREI.utils.escapeHtml(alumnoD.nombreCompleto) : sd.curp;
+            const nombreD = alumnoD ? SIREI.utils.escapeHtml(alumnoD.nombreCompleto) : SIREI.utils.escapeHtml(sd.curp || '');
+            const motivoD = SIREI.utils.escapeHtml(sd.motivo || 'Sin motivo') + (sd.motivo_otro ? ' (' + SIREI.utils.escapeHtml(sd.motivo_otro) + ')' : '');
             html += `
               <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; padding:6px 0; border-bottom:1px solid #f3f4f6;">
-                <span><strong>${nombreD}</strong> - ${sd.motivo || 'Sin motivo'}</span>
-                <span style="font-size:0.78rem; font-weight:700; color:#6d28d9; background:#ede9fe; padding:2px 10px; border-radius:12px;">Fuera definitivo</span>
+                <span><strong>${nombreD}</strong> - ${motivoD}</span>
+                <span style="font-size:0.78rem; font-weight:700; color:#6d28d9; background:#ede9fe; padding:2px 10px; border-radius:12px;">Sin regreso</span>
               </div>`;
           });
 
@@ -1132,23 +1255,39 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
         } else {
           listaHist.innerHTML = movs.map(m => {
             const alumno = alumnosGrupo.find(a => a.curp === m.curp);
-            const nombre = alumno ? SIREI.utils.escapeHtml(alumno.nombreCompleto) : m.curp;
-            const esSalida = m.estado === 'Fuera' || m.estado === 'Escape' || m.estado === 'Fuera definitivo';
-            const esDefinitivo = m.estado === 'Fuera definitivo';
-            const icono = esDefinitivo ? '🚪🚫' : (esSalida ? (m.estado === 'Escape' ? '🏃' : '🚪') : '🚪✅');
-            const color = esDefinitivo ? '#6d28d9' : (esSalida ? (m.estado === 'Escape' ? '#dc2626' : '#92400e') : '#065f46');
-            const fecha = m.salidaFormateada || m.salidaTimestamp;
-            const motivoExtra = m.motivo_otro ? ` (${m.motivo_otro})` : '';
-            const duracionMostrar = m.duracion ? ` ⏱️${m.duracion}` : '';
+            const nombre = alumno ? SIREI.utils.escapeHtml(alumno.nombreCompleto) : SIREI.utils.escapeHtml(m.curp || '');
+            const estado = m.estado || '';
+            const esDefinitivo = estado === 'Fuera definitivo';
+            const esEscape = estado === 'Escape';
+            const esFuera = estado === 'Fuera';
+            const esDentro = estado === 'Dentro';
+            let icono = '🚪✅'; let color = '#065f46';
+            if (esDefinitivo) { icono = '🚪🚫'; color = '#6d28d9'; }
+            else if (esEscape) { icono = '🏃'; color = '#dc2626'; }
+            else if (esFuera) { icono = '🚪'; color = '#92400e'; }
+            const fecha = SIREI.utils.escapeHtml(m.salidaFormateada || m.salidaTimestamp || '');
+            const motivoExtra = m.motivo_otro ? ` (${SIREI.utils.escapeHtml(m.motivo_otro)})` : '';
+            const motivoTxt = SIREI.utils.escapeHtml(m.motivo || '') + motivoExtra;
+            // P2: duración clara según estado
+            let duracionHtml = '';
+            if (esDentro) {
+              duracionHtml = m.duracion
+                ? `<span style="font-size:0.8rem; font-weight:700; color:#059669; margin-left:4px;">⏱️ ${SIREI.utils.escapeHtml(m.duracion)}</span>`
+                : '<span style="font-size:0.75rem; color:#6b7280; margin-left:4px;">⏱️ --:--</span>';
+            } else if (esFuera) {
+              duracionHtml = '<span style="font-size:0.75rem; font-weight:700; color:#f59e0b; margin-left:4px;">Aún fuera</span>';
+            } else if (esEscape || esDefinitivo) {
+              duracionHtml = '<span style="font-size:0.75rem; font-weight:700; color:#6b7280; margin-left:4px;">Sin regreso</span>';
+            }
             return `<div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #f3f4f6; font-size:0.9rem;">
               <div>
                 <span style="font-weight:500;">${nombre}</span>
-                <span style="font-size:0.75rem; color:#6b7280; margin-left:8px;">${m.motivo || ''}${motivoExtra}</span>
+                <span style="font-size:0.75rem; color:#6b7280; margin-left:8px;">${motivoTxt}</span>
               </div>
-              <div>
+              <div style="text-align:right;">
                 <span style="color:${color};">${icono}</span>
-                <span style="font-size:0.75rem; color:#6b7280;">${fecha}</span>
-                ${duracionMostrar ? `<span style="font-size:0.7rem; color:#059669; margin-left:4px;">${duracionMostrar}</span>` : ''}
+                <span style="font-size:0.75rem; color:#6b7280;">${fecha}</span><br>
+                ${duracionHtml}
               </div>
             </div>`;
           }).join('');
@@ -1181,25 +1320,67 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     }
   }
 
-  // Abrir modal (default: Registrar Salida)
+  // Reinicia el estado del modal (solo al cerrar o tras éxito). P9.
+  function reiniciarEstadoModalSalidas() {
+    const modal = document.getElementById('modalSalidasFull');
+    if (modal) {
+      modal.dataset.accion = 'salida';
+      modal.dataset.motivo = '';
+    }
+    const campoOtro = document.getElementById('campoOtroMotivo');
+    if (campoOtro) campoOtro.style.display = 'none';
+    const inputSal = document.getElementById('inputSalidaFull');
+    if (inputSal) inputSal.value = '';
+    const txtOtro = document.getElementById('textoOtroMotivo');
+    if (txtOtro) txtOtro.value = '';
+    const chkRegresa = document.getElementById('chkRegresa');
+    if (chkRegresa) chkRegresa.checked = true;
+    const chkMant = document.getElementById('chkMantenerMotivo');
+    if (chkMant) chkMant.checked = false;
+    document.querySelectorAll('.boton-motivo').forEach(b => { b.style.borderColor = '#e5e7eb'; });
+    const seccion = document.getElementById('seccion-motivo');
+    if (seccion) seccion.style.display = 'block';
+    const btnConfirm = document.getElementById('btnConfirmarSalidaEntrada');
+    if (btnConfirm) btnConfirm.textContent = '✅ Confirmar Salida';
+    marcarAccionActiva('salida');
+    ocultarConfirmacionSalidaEntrada();
+  }
+
+  function cerrarModalSalidas(reiniciar) {
+    const modal = document.getElementById('modalSalidasFull');
+    if (modal) modal.classList.remove('abierto');
+    if (qrReaderSalidaFull) {
+      qrReaderSalidaFull.stop().catch(() => {});
+      qrReaderSalidaFull = null;
+      const btnQR = document.getElementById('btnEscanearSalidaFull');
+      if (btnQR) btnQR.textContent = '📷 QR';
+      const contQR = document.getElementById('qr-reader-salida-full');
+      if (contQR) contQR.style.display = 'none';
+    }
+    if (reiniciar) reiniciarEstadoModalSalidas();
+  }
+
+  // Abrir modal (P1: sin autofocus ni .focus(); P9: conserva modo/motivo mientras esté abierto)
   document.getElementById('btnAbrirSalidas').addEventListener('click', () => {
     const modal = document.getElementById('modalSalidasFull');
     modal.classList.add('abierto');
-    // Resetear campos
-    document.getElementById('campoOtroMotivo').style.display = 'none';
-    document.getElementById('inputSalidaFull').value = '';
-    document.getElementById('textoOtroMotivo').value = '';
-    const chkRegresa = document.getElementById('chkRegresa');
-    if (chkRegresa) chkRegresa.checked = true;
-    // Default: Registrar Salida
+    // Solo asigna default si aún no hay modo en memoria (recién cerrado o primera vez)
+    if (!modal.dataset.accion) modal.dataset.accion = 'salida';
+    const accionActual = modal.dataset.accion || 'salida';
     const seccionMotivo = document.getElementById('seccion-motivo');
-    seccionMotivo.style.display = 'block';
-    document.getElementById('modalSalidasFull').dataset.accion = 'salida';
+    if (seccionMotivo) seccionMotivo.style.display = (accionActual === 'salida') ? 'block' : 'none';
     const btnConfirm = document.getElementById('btnConfirmarSalidaEntrada');
-    btnConfirm.textContent = '✅ Confirmar Salida';
-    marcarAccionActiva('salida');
-    // Limpiar selección de motivo
-    document.querySelectorAll('.boton-motivo').forEach(b => b.style.borderColor = '#e5e7eb');
+    if (btnConfirm) btnConfirm.textContent = (accionActual === 'entrada') ? '✅ Confirmar Entrada' : '✅ Confirmar Salida';
+    marcarAccionActiva(accionActual);
+    // Sincroniza el resaltado del motivo guardado en memoria
+    const motivoGuardado = modal.dataset.motivo || '';
+    document.querySelectorAll('.boton-motivo').forEach(b => {
+      b.style.borderColor = (b.dataset.motivo === motivoGuardado && motivoGuardado) ? '#3b82f6' : '#e5e7eb';
+    });
+    if (motivoGuardado === 'Otro') {
+      const campoOtro = document.getElementById('campoOtroMotivo');
+      if (campoOtro) campoOtro.style.display = 'block';
+    }
     // Cargar datos actualizados
     actualizarEstadoSalidas();
     // Cerrar QR si estaba abierto
@@ -1209,65 +1390,54 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
       document.getElementById('qr-reader-salida-full').style.display = 'none';
       document.getElementById('btnEscanearSalidaFull').textContent = '📷 QR';
     }
-    document.getElementById('inputSalidaFull').focus();
+    // P1: NO enfocar ningún input al abrir (evita que se abra el teclado en móvil)
   });
 
-  // Cerrar modal con el botón ✕
+  // Cerrar modal con el botón ✕ (P9: reinicia estado)
   document.getElementById('btnCerrarSalidasFull').addEventListener('click', () => {
-    document.getElementById('modalSalidasFull').classList.remove('abierto');
-    if (qrReaderSalidaFull) {
-      qrReaderSalidaFull.stop().catch(() => {});
-      qrReaderSalidaFull = null;
-      document.getElementById('btnEscanearSalidaFull').textContent = '📷 QR';
-    }
+    cerrarModalSalidas(true);
   });
 
-  // Cerrar modal haciendo clic fuera (en el fondo oscuro)
+  // Cerrar modal haciendo clic fuera (en el fondo oscuro) (P9: reinicia estado)
   document.getElementById('modalSalidasFull').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) {
-      document.getElementById('modalSalidasFull').classList.remove('abierto');
-      if (qrReaderSalidaFull) {
-        qrReaderSalidaFull.stop().catch(() => {});
-        qrReaderSalidaFull = null;
-        document.getElementById('btnEscanearSalidaFull').textContent = '📷 QR';
-      }
+      cerrarModalSalidas(true);
     }
   });
 
-  // Botón Registrar Salida
+  // Botón Registrar Salida (P9: conserva motivo/texto, solo cambia modo visible)
   document.getElementById('btnAccionSalida').addEventListener('click', () => {
     const seccion = document.getElementById('seccion-motivo');
-    seccion.style.display = 'block';
-    document.getElementById('campoOtroMotivo').style.display = 'none';
-    document.getElementById('textoOtroMotivo').value = '';
+    if (seccion) seccion.style.display = 'block';
     document.getElementById('modalSalidasFull').dataset.accion = 'salida';
     const btnConfirm = document.getElementById('btnConfirmarSalidaEntrada');
-    btnConfirm.textContent = '✅ Confirmar Salida';
+    if (btnConfirm) btnConfirm.textContent = '✅ Confirmar Salida';
     marcarAccionActiva('salida');
-    document.querySelectorAll('.boton-motivo').forEach(b => b.style.borderColor = '#e5e7eb');
-    document.getElementById('inputSalidaFull').focus();
+    // P1: sin .focus() para no abrir el teclado
   });
 
-  // Botón Registrar Entrada
+  // Botón Registrar Entrada (P9: conserva estado, solo cambia modo)
   document.getElementById('btnAccionEntrada').addEventListener('click', () => {
-    document.getElementById('seccion-motivo').style.display = 'none';
+    const sec = document.getElementById('seccion-motivo');
+    if (sec) sec.style.display = 'none';
     document.getElementById('modalSalidasFull').dataset.accion = 'entrada';
     const btnConfirm = document.getElementById('btnConfirmarSalidaEntrada');
-    btnConfirm.textContent = '✅ Confirmar Entrada';
+    if (btnConfirm) btnConfirm.textContent = '✅ Confirmar Entrada';
     marcarAccionActiva('entrada');
-    document.getElementById('inputSalidaFull').focus();
+    // P1: sin .focus() para no abrir el teclado
   });
 
-  // Selección de motivo (Baño, Otro)
+  // Selección de motivo (Baño, Otro). "Otro" guarda dataset.motivo='Otro' para que
+  // la casilla "¿Va a regresar?" sí se tome en cuenta (salida definitiva si se desactiva).
   document.querySelectorAll('.boton-motivo').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.boton-motivo').forEach(b => b.style.borderColor = '#e5e7eb');
       const motivo = btn.dataset.motivo;
       if (motivo === 'Otro') {
         document.getElementById('campoOtroMotivo').style.display = 'block';
-        document.getElementById('textoOtroMotivo').focus();
+        // P1: sin .focus() para no abrir el teclado; el usuario toca el campo si quiere escribir
         btn.style.borderColor = '#3b82f6';
-        document.getElementById('modalSalidasFull').dataset.motivo = '';
+        document.getElementById('modalSalidasFull').dataset.motivo = 'Otro';
         return;
       }
       document.getElementById('modalSalidasFull').dataset.motivo = motivo;
@@ -1276,60 +1446,166 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     });
   });
 
-  // Botón Confirmar (unificado para salida y entrada)
-  document.getElementById('btnConfirmarSalidaEntrada').addEventListener('click', async () => {
-    const accion = document.getElementById('modalSalidasFull').dataset.accion;
-    const input = document.getElementById('inputSalidaFull');
-    let valor = input.value.trim();
-    if (!valor) {
-      SIREI.utils.mostrarToast('Ingresa el nombre o CURP del alumno.', 'error');
-      return;
-    }
+  // ---- P5: pantalla de confirmación fullscreen (tapa todo el modal, autocierre 2s) ----
+  function ocultarConfirmacionSalidaEntrada() {
+    if (window._timeoutConfirmacion) { clearTimeout(window._timeoutConfirmacion); window._timeoutConfirmacion = null; }
+    if (window._intervalConfirmacion) { clearInterval(window._intervalConfirmacion); window._intervalConfirmacion = null; }
+    const cont = document.getElementById('confirmacionSalidaEntrada');
+    if (cont) { cont.style.display = 'none'; cont.innerHTML = ''; }
+  }
 
-    let alumno = alumnosGrupo.find(a => a.curp === valor.toUpperCase());
-    if (!alumno) {
-      const nombreLower = valor.toLowerCase();
-      alumno = alumnosGrupo.find(a => a.nombreCompleto.toLowerCase().includes(nombreLower));
+  // Parser tolerante de fechas de salida/entrada (ISO, dd/MM/yyyy HH:mm:ss, yyyy-MM-dd HH:mm:ss)
+  function parsearFechaMovimiento(v) {
+    if (v == null || v === '') return null;
+    try {
+      if (v instanceof Date) return isNaN(v.getTime()) ? null : new Date(v.getTime());
+      const s = String(v).trim();
+      if (!s) return null;
+      if (s.indexOf('T') >= 0) {
+        const d = new Date(s);
+        return isNaN(d.getTime()) ? null : d;
+      }
+      const partes = s.split(' ');
+      const f = partes[0]; const h = partes[1] || '00:00:00';
+      const hp = h.split(':');
+      const hh = Number(hp[0] || 0), mm = Number(hp[1] || 0), ss = Number(hp[2] || 0);
+      if (f.indexOf('/') >= 0) {
+        const fp = f.split('/');
+        if (fp.length !== 3) return null;
+        const d = new Date(Number(fp[2]), Number(fp[1]) - 1, Number(fp[0]), hh, mm, ss);
+        return isNaN(d.getTime()) ? null : d;
+      }
+      if (f.indexOf('-') >= 0) {
+        const fp = f.split('-');
+        if (fp.length !== 3) return null;
+        const d = new Date(Number(fp[0]), Number(fp[1]) - 1, Number(fp[2]), hh, mm, ss);
+        return isNaN(d.getTime()) ? null : d;
+      }
+      const d = new Date(s);
+      return isNaN(d.getTime()) ? null : d;
+    } catch (e) { return null; }
+  }
+
+  function formatearDuracionHMS(totalSeg) {
+    const t = Math.max(0, Math.floor(totalSeg));
+    const h = String(Math.floor(t / 3600)).padStart(2, '0');
+    const m = String(Math.floor((t % 3600) / 60)).padStart(2, '0');
+    const s = String(t % 60).padStart(2, '0');
+    return h + ':' + m + ':' + s;
+  }
+
+  function mostrarConfirmacionSalidaEntrada(datos) {
+    // Si hay una confirmación previa visible, se cierra inmediatamente y se muestra la nueva (P5)
+    ocultarConfirmacionSalidaEntrada();
+    const cont = document.getElementById('confirmacionSalidaEntrada');
+    if (!cont) return;
+    const esSalida = datos.tipo === 'salida';
+    const esDefinitiva = !!datos.definitiva;
+    const colorFondo = esSalida ? '#f59e0b' : '#10b981';
+    const titulo = esSalida ? 'Ya puedes salir' : 'Tu entrada está registrada';
+    const icono = esSalida ? '🚪' : '✅';
+    const nombreSeguro = SIREI.utils.escapeHtml(datos.nombre || '');
+    const motivoSeguro = SIREI.utils.escapeHtml(datos.motivo || '');
+    let bloqueTiempo = '';
+    if (esSalida && !esDefinitiva) {
+      bloqueTiempo = `<p style="margin:8px 0 0 0; font-size:1rem; color:#374151;">Tiempo fuera:</p><p id="cronoConfirmacion" style="margin:0; font-size:2rem; font-weight:800; color:${colorFondo};">00:00</p>`;
+    } else if (esSalida && esDefinitiva) {
+      bloqueTiempo = `<p style="margin:8px 0 0 0; font-size:1rem; font-weight:700; color:#6d28d9;">Salida definitiva · Sin regreso</p>`;
+    } else {
+      bloqueTiempo = `<p style="margin:8px 0 0 0; font-size:1rem; color:#374151;">Tiempo total fuera:</p><p style="margin:0; font-size:2rem; font-weight:800; color:${colorFondo};">⏱️ ${SIREI.utils.escapeHtml(datos.duracion || '—')}</p>`;
     }
+    cont.innerHTML = `
+      <div class="confirmacion-overlay" style="background:rgba(0,0,0,0.75);">
+        <div class="confirmacion-tarjeta">
+          <div style="font-size:3rem;">${icono}</div>
+          <h2 style="margin:8px 0; font-size:1.6rem; color:#111827;">${titulo}</h2>
+          <p style="margin:4px 0; font-size:1.25rem; font-weight:700; color:#1E3A8A;">${nombreSeguro}</p>
+          ${esSalida && motivoSeguro ? `<p style="margin:4px 0; font-size:1.05rem; color:#374151;">Motivo: <strong>${motivoSeguro}</strong></p>` : ''}
+          ${bloqueTiempo}
+        </div>
+      </div>`;
+    cont.style.display = 'block';
+    // Cronómetro en vivo solo en salidas CON regreso
+    if (esSalida && !esDefinitiva && datos.salidaTimestamp) {
+      const salidaTs = datos.salidaTimestamp;
+      const pintar = () => {
+        const el = document.getElementById('cronoConfirmacion');
+        if (!el) return;
+        const fechaSalida = parsearFechaMovimiento(salidaTs);
+        if (!fechaSalida) { el.textContent = '00:00'; return; }
+        const seg = Math.max(0, Math.floor((new Date() - fechaSalida) / 1000));
+        el.textContent = String(Math.floor(seg / 60)).padStart(2, '0') + ':' + String(seg % 60).padStart(2, '0');
+      };
+      pintar();
+      window._intervalConfirmacion = setInterval(pintar, 1000);
+    }
+    window._timeoutConfirmacion = setTimeout(ocultarConfirmacionSalidaEntrada, 2000);
+  }
+
+  function obtenerMotivoSalidaActual() {
+    const modal = document.getElementById('modalSalidasFull');
+    const motivoSel = modal ? (modal.dataset.motivo || '') : '';
+    if (motivoSel === 'Baño') return { motivo: 'Baño', motivoOtro: '', valido: true };
+    // "Otro" (o texto escrito en su campo) exige especificar el motivo; la casilla
+    // "¿Va a regresar?" decide si es salida con regreso o definitiva.
+    const txt = document.getElementById('textoOtroMotivo');
+    const otroTexto = txt ? txt.value.trim() : '';
+    if (motivoSel === 'Otro' || otroTexto) {
+      if (!otroTexto) return { valido: false };
+      return { motivo: 'Otro', motivoOtro: otroTexto, valido: true };
+    }
+    return { valido: false };
+  }
+
+  // Procesa salida/entrada por CURP (usado por Confirm manual y por QR). P3+P5.
+  async function procesarSalidaEntradaPorCurp(curpRaw) {
+    const accion = document.getElementById('modalSalidasFull').dataset.accion || 'salida';
+    const curp = String(curpRaw || '').trim().toUpperCase();
+    const alumno = alumnosGrupo.find(a => a.curp === curp);
     if (!alumno) {
       SIREI.utils.mostrarToast('Alumno no encontrado en este grupo.', 'error');
+      if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
       return;
     }
-    const curp = alumno.curp;
-
-    let motivo = '';
+    let motivo = '', motivoOtro = '', vaARegresar = true;
     if (accion === 'salida') {
-      motivo = document.getElementById('modalSalidasFull').dataset.motivo || '';
-      if (!motivo) {
-        const otroTexto = document.getElementById('textoOtroMotivo').value.trim();
-        if (otroTexto) {
-          motivo = otroTexto;
-        } else {
-          SIREI.utils.mostrarToast('Selecciona un motivo o especifica "Otro".', 'error');
-          return;
-        }
-      }
-      if (!motivo) {
-        SIREI.utils.mostrarToast('Selecciona un motivo.', 'error');
+      const res = obtenerMotivoSalidaActual();
+      if (!res.valido) {
+        SIREI.utils.mostrarToast('Selecciona un motivo primero', 'error');
+        if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
         return;
       }
+      motivo = res.motivo; motivoOtro = res.motivoOtro || '';
+      if (motivo === 'Otro') {
+        const chkRegresa = document.getElementById('chkRegresa');
+        vaARegresar = chkRegresa ? chkRegresa.checked : true;
+      } else if (motivo === 'Baño') {
+        vaARegresar = true;
+      }
     }
-
     const btnConfirm = document.getElementById('btnConfirmarSalidaEntrada');
-    const textoOriginal = btnConfirm.textContent;
-    btnConfirm.disabled = true;
-    btnConfirm.textContent = '⏳ Procesando...';
-
+    const textoOriginal = btnConfirm ? btnConfirm.textContent : '';
+    if (btnConfirm) { btnConfirm.disabled = true; btnConfirm.textContent = '⏳ Procesando...'; }
+    // Para entradas: obtener la hora de salida activa ANTES de registrar, para calcular
+    // la duración localmente (salida -> entrada) aunque el backend no la devuelva.
+    let salidaActivaTs = null;
+    if (accion === 'entrada') {
+      try {
+        const rSal = await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ accion: 'obtenerSalidasClase', token: token, idClase: claseActiva.idClase })
+        });
+        const dSal = await rSal.json();
+        if (dSal.success) {
+          const rec = (dSal.salidas || []).find(s => s.curp === alumno.curp && s.estado === 'Fuera');
+          if (rec) salidaActivaTs = rec.salidaFormateada || rec.salidaTimestamp || null;
+        }
+      } catch (e) { console.error('No se pudo leer salida activa:', e); }
+    }
     try {
       let response;
       if (accion === 'salida') {
-        const motivoOtro = (motivo === 'Otro') ? document.getElementById('textoOtroMotivo').value.trim() : '';
-        // Baño siempre regresa; "Otro" depende del checkbox "¿Va a regresar?"
-        let vaARegresar = true;
-        if (motivo === 'Otro') {
-          const chkRegresa = document.getElementById('chkRegresa');
-          vaARegresar = chkRegresa ? chkRegresa.checked : true;
-        }
         response = await fetch(API_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -1337,7 +1613,7 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
             accion: 'registrarSalida',
             token: token,
             idClase: claseActiva.idClase,
-            curpAlumno: curp,
+            curpAlumno: alumno.curp,
             motivo: motivo,
             motivoOtro: motivoOtro,
             vaARegresar: vaARegresar ? 'true' : 'false'
@@ -1351,7 +1627,7 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
             accion: 'registrarEntrada',
             token: token,
             idClase: claseActiva.idClase,
-            curpAlumno: curp
+            curpAlumno: alumno.curp
           })
         });
       }
@@ -1359,48 +1635,89 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
       if (result.success) {
         const mensaje = accion === 'salida' ? 'Salida registrada' : 'Entrada registrada';
         SIREI.utils.mostrarToast(`✅ ${mensaje} para ${alumno.nombreCompleto}`);
-        
-        input.value = '';
-        document.getElementById('seccion-motivo').style.display = 'none';
-        document.getElementById('campoOtroMotivo').style.display = 'none';
-        // Respetar la casilla "Mantener" para el texto del motivo "Otro"
-        const chkMantenerMotivo = document.getElementById('chkMantenerMotivo');
-        if (!chkMantenerMotivo || !chkMantenerMotivo.checked) {
-          document.getElementById('textoOtroMotivo').value = '';
+        if (navigator.vibrate) navigator.vibrate(50);
+        // Duración: backend -> historial -> cálculo local (salida -> entrada)
+        let duracionFinal = result.duracion || '';
+        if (accion === 'entrada' && !duracionFinal) {
+          try {
+            const rHist = await fetch(API_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({ accion: 'obtenerHistorialSalidas', token: token, idClase: claseActiva.idClase, limite: 30 })
+            });
+            const dHist = await rHist.json();
+            if (dHist.success) {
+              const movs = dHist.movimientos || [];
+              const rec = movs.find(m => m.curp === alumno.curp && m.estado === 'Dentro' && m.duracion) || movs.find(m => m.curp === alumno.curp && m.duracion);
+              if (rec && rec.duracion) duracionFinal = rec.duracion;
+            }
+          } catch (e) { console.error('No se pudo releer duración:', e); }
         }
-        document.getElementById('modalSalidasFull').dataset.motivo = '';
-        document.querySelectorAll('.boton-motivo').forEach(b => b.style.borderColor = '#e5e7eb');
+        if (accion === 'entrada' && !duracionFinal && salidaActivaTs) {
+          const fSal = parsearFechaMovimiento(salidaActivaTs);
+          if (fSal) {
+            const seg = Math.max(0, Math.floor((new Date() - fSal) / 1000));
+            duracionFinal = formatearDuracionHMS(seg);
+          }
+        }
+        const motivoMostrar = (motivo === 'Otro' && motivoOtro) ? ('Otro: ' + motivoOtro) : motivo;
+        const esDefinitiva = (accion === 'salida') && (!vaARegresar || result.estado === 'Fuera definitivo');
+        mostrarConfirmacionSalidaEntrada({
+          tipo: accion,
+          nombre: alumno.nombreCompleto,
+          motivo: motivoMostrar,
+          duracion: duracionFinal,
+          salidaTimestamp: result.salidaTimestamp || salidaActivaTs || new Date().toISOString(),
+          definitiva: esDefinitiva
+        });
+        // P9: reinicia estado solo tras éxito (pero mantiene modal abierto)
+        const input = document.getElementById('inputSalidaFull');
+        if (input) input.value = '';
+        const modal = document.getElementById('modalSalidasFull');
+        if (modal) modal.dataset.motivo = '';
+        const txtOtro = document.getElementById('textoOtroMotivo');
+        const chkMant = document.getElementById('chkMantenerMotivo');
+        if (!chkMant || !chkMant.checked) { if (txtOtro) txtOtro.value = ''; }
+        const campoOtro = document.getElementById('campoOtroMotivo');
+        if (campoOtro) campoOtro.style.display = 'none';
+        document.querySelectorAll('.boton-motivo').forEach(b => { b.style.borderColor = '#e5e7eb'; });
         const chkRegresa = document.getElementById('chkRegresa');
         if (chkRegresa) chkRegresa.checked = true;
-        if (accion === 'entrada') {
-          btnConfirm.textContent = '✅ Confirmar Entrada';
-        } else {
-          btnConfirm.textContent = '✅ Confirmar Salida';
-        }
-        
         await actualizarEstadoSalidas();
-        
         if (qrReaderSalidaFull) {
           qrReaderSalidaFull.stop().catch(() => {});
           qrReaderSalidaFull = null;
           document.getElementById('qr-reader-salida-full').style.display = 'none';
           document.getElementById('btnEscanearSalidaFull').textContent = '📷 QR';
         }
-        
-        if (navigator.vibrate) navigator.vibrate(50);
-        
       } else {
         SIREI.utils.mostrarToast('❌ ' + (result.message || 'Error al registrar'), 'error');
+        if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
       }
     } catch (e) {
       SIREI.utils.mostrarToast('Error de conexión: ' + e.message, 'error');
     } finally {
-      btnConfirm.disabled = false;
-      btnConfirm.textContent = textoOriginal;
+      if (btnConfirm) { btnConfirm.disabled = false; btnConfirm.textContent = textoOriginal; }
     }
+  }
+
+  // Botón Confirmar (unificado para salida y entrada, vía input manual)
+  document.getElementById('btnConfirmarSalidaEntrada').addEventListener('click', async () => {
+    const input = document.getElementById('inputSalidaFull');
+    const valor = input ? input.value.trim() : '';
+    if (!valor) {
+      SIREI.utils.mostrarToast('Ingresa el nombre o CURP del alumno.', 'error');
+      return;
+    }
+    const alumno = buscarAlumnoPorTexto(valor);
+    if (!alumno) {
+      SIREI.utils.mostrarToast('Alumno no encontrado en este grupo.', 'error');
+      return;
+    }
+    await procesarSalidaEntradaPorCurp(alumno.curp);
   });
 
-  // QR para salidas (con debounce)
+  // QR para salidas/entradas (P3: procesa automáticamente según modo activo)
   document.getElementById('btnEscanearSalidaFull').addEventListener('click', () => {
     const readerContainer = document.getElementById('qr-reader-salida-full');
     const btn = document.getElementById('btnEscanearSalidaFull');
@@ -1416,28 +1733,26 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     readerContainer.innerHTML = '';
     qrReaderSalidaFull = new Html5Qrcode("qr-reader-salida-full");
     const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+    let qrProcesando = false;
     qrReaderSalidaFull.start(
       { facingMode: "environment" },
       config,
       (decodedText) => {
-        // Cerrar cámara INMEDIATAMENTE para no leer el mismo código repetido
-        if (qrReaderSalidaFull) {
-          qrReaderSalidaFull.stop().catch(() => {});
-          qrReaderSalidaFull = null;
-        }
-        readerContainer.style.display = 'none';
-        document.getElementById('btnEscanearSalidaFull').textContent = '📷 QR';
-
-        const curp = decodedText.trim().toUpperCase();
-        const alumno = alumnosGrupo.find(a => a.curp === curp);
-        if (alumno) {
-          document.getElementById('inputSalidaFull').value = alumno.nombreCompleto;
-          SIREI.utils.mostrarToast('👤 ' + alumno.nombreCompleto);
-        } else {
-          document.getElementById('inputSalidaFull').value = curp;
-          SIREI.utils.mostrarToast('CURP escaneado: ' + curp, 'warning');
-        }
-        if (navigator.vibrate) navigator.vibrate(50);
+        if (qrProcesando) return;
+        qrProcesando = true;
+        // Cerrar lector INMEDIATAMENTE para evitar duplicados (P3)
+        const cerrarLector = () => {
+          try {
+            if (qrReaderSalidaFull) { qrReaderSalidaFull.stop().catch(() => {}); qrReaderSalidaFull = null; }
+          } catch (e) {}
+          const rc = document.getElementById('qr-reader-salida-full');
+          if (rc) rc.style.display = 'none';
+          const bq = document.getElementById('btnEscanearSalidaFull');
+          if (bq) bq.textContent = '📷 QR';
+        };
+        cerrarLector();
+        const curp = String(decodedText || '').trim().toUpperCase();
+        procesarSalidaEntradaPorCurp(curp).finally(() => { qrProcesando = false; });
       },
       (err) => {}
     );
