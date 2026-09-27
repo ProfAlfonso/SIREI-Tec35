@@ -1071,3 +1071,44 @@ input:focus {
     padding: 10px !important;
   }
 }
+
+/* ============================================================
+   P5: Pantalla de confirmación de salidas/entradas (tapa el modal)
+   P4: Icono de baño ocupado/desocupado
+   ============================================================ */
+#confirmacionSalidaEntrada {
+  position: absolute;
+  inset: 0;
+  z-index: 500;
+}
+#confirmacionSalidaEntrada .confirmacion-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0,0,0,0.78);
+}
+#confirmacionSalidaEntrada .confirmacion-tarjeta {
+  background: #ffffff;
+  border-radius: 18px;
+  padding: 28px 24px;
+  max-width: 420px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+}
+#iconoBano {
+  display: inline-flex;
+  align-items: center;
+  font-weight: 700;
+}
+@media (max-width: 480px) {
+  #confirmacionSalidaEntrada .confirmacion-tarjeta {
+    padding: 24px 18px;
+  }
+  #confirmacionSalidaEntrada .confirmacion-tarjeta h2 {
+    font-size: 1.35rem !important;
+  }
+}
