@@ -220,20 +220,29 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
   }
 
   let ultimosRegistros = [];
+  let entregasPorAlumno = {};    // curp -> entrega (caché local; evita reconsultar tras cada guardado)
+  let guardandoEntrega = false;  // candado anti doble registro
 
-  async function mostrarDetalleEvidencia(ev) {
+  async function mostrarDetalleEvidencia(ev, saltarRefresco) {
     evidenciaSeleccionada = ev;
     const detalleDiv = document.getElementById('detalleEvidencia');
     const contenidoDiv = document.getElementById('detalleContenido');
     const nombreSpan = document.getElementById('detalleNombre');
+    const esc = SIREI.utils.escapeHtml;
 
     nombreSpan.textContent = ev.nombreEvidencia;
 
-    const entregas = await obtenerEntregas(ev.id);
-    const entregasPorAlumno = {};
-    entregas.forEach(e => {
-      entregasPorAlumno[e.curpAlumno] = e;
-    });
+    // Solo se consulta al servidor al abrir/refrescar; tras guardar se usa la caché local
+    // (el guardado va en segundo plano, así que reconsultar mostraría datos viejos).
+    if (!saltarRefresco) {
+      const entregasServidor = await obtenerEntregas(ev.id);
+      entregasPorAlumno = {};
+      entregasServidor.forEach(function (e) {
+        entregasPorAlumno[e.curpAlumno] = e;
+      });
+    }
+    const entregas = Object.keys(entregasPorAlumno).map(function (k) { return entregasPorAlumno[k]; });
+    const respuestaRapida = !ev.calificacionNumerica && !ev.escalaSuficiencia;
 
     const fechaMax = ev.fechaMaximaEntrega;
     let fechaColor = '#6b7280';
@@ -254,179 +263,274 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
       </div>
     ` : '';
 
-    let qrSection = '';
-    if (typeof Html5Qrcode !== 'undefined') {
-      qrSection = `
-        <div id="qr-evidence-reader" style="display:none; width:100%; max-width:300px; margin:8px auto;"></div>
-        <button id="btnEscanearEvidencia" class="btn btn-secondary" style="width:100%; margin-bottom:4px;">Escanear QR</button>
-      `;
+    // ---- Listas de entregados / pendientes para acceso rápido ----
+    const curpsEntregados = {};
+    entregas.forEach(function (e) { curpsEntregados[e.curpAlumno] = true; });
+    const listaPendientes = alumnosGrupo.filter(function (a) { return !curpsEntregados[a.curp]; });
+    const listaEntregados = alumnosGrupo.filter(function (a) { return curpsEntregados[a.curp]; });
+
+    function chipsAlumnos(lista, tipo) {
+      if (lista.length === 0) return '<span style="color:#6b7280; font-size:0.85rem;">Ninguno</span>';
+      return lista.map(function (a) {
+        return '<button type="button" class="chip-alumno-evidencia" data-curp="' + esc(a.curp) + '" ' +
+          'style="padding:8px 12px; border-radius:999px; border:1px solid ' + (tipo === 'ok' ? '#86efac' : '#fcd34d') + '; ' +
+          'background:' + (tipo === 'ok' ? '#f0fdf4' : '#fffbeb') + '; color:#1f2937; font-size:0.85rem; cursor:pointer; margin:0 6px 6px 0;">' +
+          (tipo === 'ok' ? '✅' : '⏳') + ' ' + esc(a.nombreCompleto) + '</button>';
+      }).join('');
     }
 
     contenidoDiv.innerHTML = `
-      <div style="margin-bottom:8px; font-size:0.85rem; color:#4b5563;">
-        ${ev.instrumentoEvaluacion ? `<p>Instrumento: <a href="${ev.instrumentoEvaluacion}" target="_blank" style="color:#3b82f6;">Abrir</a></p>` : ''}
-        ${fechaHtml}
-        ${ev.periodo ? `<p>Periodo: ${SIREI.utils.escapeHtml(ev.periodo)}</p>` : ''}
+      <!-- Encabezado de la evidencia -->
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap; background:#f8fafc; border:1px solid #e5e7eb; border-radius:10px; padding:10px 12px; margin-bottom:14px;">
+        <div style="min-width:0;">
+          <div style="font-weight:700; font-size:1rem;">${esc(ev.nombreEvidencia)}</div>
+          <div style="font-size:0.8rem; color:#6b7280; margin-top:2px;">
+            ${ev.calificacionNumerica ? 'Calificación numérica' : 'Sin calificación'}
+            ${ev.escalaSuficiencia ? ' · Escala de suficiencia' : ''}
+            ${ev.periodo ? ' · ' + esc(ev.periodo) : ''}
+          </div>
+          ${fechaHtml}
+          ${ev.instrumentoEvaluacion ? `<div><a href="${esc(ev.instrumentoEvaluacion)}" target="_blank" style="color:#3b82f6; font-size:0.85rem;">📄 Instrumento de evaluación</a></div>` : ''}
+        </div>
+        <div style="display:flex; gap:6px; flex:0 0 auto;">
+          <span title="Entregados" style="background:#dcfce7; color:#166534; border-radius:999px; padding:6px 12px; font-weight:700; font-size:0.85rem;">✅ ${entregas.length}</span>
+          <span title="Pendientes" style="background:#fef3c7; color:#92400e; border-radius:999px; padding:6px 12px; font-weight:700; font-size:0.85rem;">⏳ ${alumnosGrupo.length - entregas.length}</span>
+        </div>
       </div>
-      <div style="display:flex; gap:6px; margin-bottom:8px;">
-        <input type="text" id="busquedaAlumnoEvidencia" list="alumnosListEvidencia" placeholder="Buscar alumno por nombre o CURP..." style="flex:3; padding:8px 10px; border-radius:8px; border:1px solid #d1d5db;">
+
+      <!-- Paso 1: elegir alumno -->
+      <div style="font-weight:700; margin-bottom:6px; font-size:0.9rem;">1. Elige al alumno</div>
+      <div style="display:flex; gap:8px; margin-bottom:4px;">
+        <input type="text" id="busquedaAlumnoEvidencia" list="alumnosListEvidencia" placeholder="Escribe nombre o CURP…" style="flex:1; min-width:0; padding:10px; border-radius:8px; border:1px solid #d1d5db; font-size:1rem;">
         <datalist id="alumnosListEvidencia">
-          ${alumnosGrupo.map(a => `<option value="${a.nombreCompleto}" data-curp="${a.curp}">`).join('')}
+          ${alumnosGrupo.map(a => `<option value="${esc(a.nombreCompleto)}" data-curp="${esc(a.curp)}">`).join('')}
         </datalist>
-        <button id="btnAsignarEvidencia" class="btn btn-success" style="flex:1;">Asignar</button>
+        <button id="btnEscanearEvidencia" class="btn btn-secondary" style="flex:0 0 auto;">📷 QR</button>
       </div>
-      <!-- CAMPO DE OBSERVACIONES Y DICTADO (rediseñado para móviles) -->
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px;">
-        <span style="font-weight:600; font-size:0.9rem;">Observaciones (opcional)</span>
-        <label style="display:flex; align-items:center; gap:6px; font-weight:500; font-size:0.8rem; cursor:pointer;">
-          <input type="checkbox" id="chkMantenerObsEvidencia" style="width:16px; height:16px; accent-color:#1E3A8A;"> Mantener
-        </label>
+
+      <!-- Tarjeta del alumno seleccionado -->
+      <div id="tarjetaAlumnoEvidencia"></div>
+
+      <!-- Paso 2: observaciones (se comparten entre alumnos con "Mantener") -->
+      <div style="margin-top:12px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+          <span style="font-weight:600; font-size:0.9rem;">2. Observaciones (opcional)</span>
+          <label style="display:flex; align-items:center; gap:6px; font-weight:500; font-size:0.8rem; cursor:pointer;">
+            <input type="checkbox" id="chkMantenerObsEvidencia" style="width:16px; height:16px; accent-color:#1E3A8A;"> Mantener
+          </label>
+        </div>
+        <div style="position:relative; width:100%;">
+          <textarea id="observacionesEvidencia" rows="2" placeholder="Observaciones (opcional)..." style="width:100%; padding:10px 44px 10px 10px; border-radius:8px; border:1px solid #d1d5db; resize:vertical; min-height:44px; font-size:16px; box-sizing:border-box;"></textarea>
+          <button id="btnDictadoEvidenciaObs" type="button" style="position:absolute; right:6px; bottom:6px; width:36px; height:36px; padding:0; font-size:1.2rem; border:none; background:transparent; display:flex; align-items:center; justify-content:center; border-radius:50%; cursor:pointer;" title="Dictar por voz">🎤</button>
+        </div>
       </div>
-      <div style="position:relative; width:100%; margin-bottom:6px;">
-        <textarea id="observacionesEvidencia" rows="2" placeholder="Observaciones (opcional)..." style="width:100%; padding:10px 44px 10px 10px; border-radius:8px; border:1px solid #d1d5db; resize:vertical; min-height:44px; font-size:16px; box-sizing:border-box;"></textarea>
-        <button id="btnDictadoEvidenciaObs" type="button" style="position:absolute; right:6px; bottom:6px; width:36px; height:36px; padding:0; font-size:1.2rem; border:none; background:transparent; display:flex; align-items:center; justify-content:center; border-radius:50%; cursor:pointer;" title="Dictar por voz">
-          🎤
-        </button>
-      </div>
-      ${qrSection}
-      <div id="resultadoIndividualEvidencia" style="margin:6px 0; font-size:0.9rem;"></div>
+
+      <!-- Paso 3: guardar -->
+      <button id="btnGuardarEntrega" class="btn btn-primary" style="width:100%; margin-top:12px; padding:14px; font-size:1rem;" disabled>✅ Guardar entrega</button>
+
+      <!-- Listas rápidas -->
+      <details style="margin-top:14px; background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:10px 12px;">
+        <summary style="cursor:pointer; font-weight:600; font-size:0.9rem;">⏳ Pendientes (${listaPendientes.length}) — toca un nombre</summary>
+        <div style="margin-top:8px;">${chipsAlumnos(listaPendientes, 'pend')}</div>
+      </details>
+      <details style="margin-top:8px; background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:10px 12px;">
+        <summary style="cursor:pointer; font-weight:600; font-size:0.9rem;">✅ Ya entregaron (${listaEntregados.length})</summary>
+        <div style="margin-top:8px;">${chipsAlumnos(listaEntregados, 'ok')}</div>
+      </details>
+
       ${feedbackHtml}
-      <div style="margin-top:8px; font-size:0.8rem; color:#6b7280;">
-        <span>Total alumnos: ${alumnosGrupo.length} | Entregados: ${entregas.length} | Pendientes: ${alumnosGrupo.length - entregas.length}</span>
-      </div>
     `;
 
     detalleDiv.style.display = 'block';
 
-    const inputBusqueda = document.getElementById('busquedaAlumnoEvidencia');
-    const resultadoDiv = document.getElementById('resultadoIndividualEvidencia');
-    const obsTextarea = document.getElementById('observacionesEvidencia');
+    let alumnoActual = null;
+
+    // Accesos al DOM: se consultan al vuelo para que el modo continuo del QR
+    // siga funcionando después de cada repintado.
+    function elBusqueda() { return document.getElementById('busquedaAlumnoEvidencia'); }
+    function elTarjeta() { return document.getElementById('tarjetaAlumnoEvidencia'); }
+    function elObs() { return document.getElementById('observacionesEvidencia'); }
+    function elGuardar() { return document.getElementById('btnGuardarEntrega'); }
 
     // Limpia las observaciones solo si la casilla "Mantener" no está activa
     function limpiarObsEvidencia() {
       const chk = document.getElementById('chkMantenerObsEvidencia');
-      if ((!chk || !chk.checked) && obsTextarea) {
-        obsTextarea.value = '';
+      const obs = elObs();
+      if ((!chk || !chk.checked) && obs) obs.value = '';
+    }
+
+    // Pinta la tarjeta del alumno seleccionado con su estado actual
+    function seleccionarAlumno(alumno) {
+      const tarjeta = elTarjeta();
+      const btn = elGuardar();
+      if (!tarjeta) return;
+
+      alumnoActual = alumno || null;
+
+      if (!alumno) {
+        tarjeta.innerHTML = '';
+        if (btn) { btn.disabled = true; btn.textContent = '✅ Guardar entrega'; }
+        return;
+      }
+
+      const entrega = entregasPorAlumno[alumno.curp];
+      const yaEntrego = !!entrega;
+
+      tarjeta.innerHTML = `
+        <div style="margin-top:10px; border:2px solid ${yaEntrego ? '#86efac' : '#fcd34d'}; border-radius:12px; padding:12px; background:${yaEntrego ? '#f0fdf4' : '#fffbeb'};">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+            <strong style="font-size:1.05rem;">${esc(alumno.nombreCompleto)}</strong>
+            <span style="font-size:0.8rem; font-weight:700; color:${yaEntrego ? '#166534' : '#92400e'};">${yaEntrego ? '✅ Ya entregó' : '⏳ Pendiente'}</span>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+            ${ev.calificacionNumerica ? `<input type="number" id="indCalif" placeholder="Calificación 0-10" min="0" max="10" step="0.1" value="${entrega && entrega.calificacion ? esc(entrega.calificacion) : ''}" style="flex:1; min-width:120px; padding:10px; border-radius:8px; border:1px solid #d1d5db; font-size:1rem;">` : ''}
+            ${ev.escalaSuficiencia ? `<select id="indEscala" style="flex:1; min-width:140px; padding:10px; border-radius:8px; border:1px solid #d1d5db; font-size:1rem;">
+              <option value="">Escala…</option>
+              <option value="Excelente" ${entrega && entrega.escala === 'Excelente' ? 'selected' : ''}>Excelente</option>
+              <option value="Suficiente" ${entrega && entrega.escala === 'Suficiente' ? 'selected' : ''}>Suficiente</option>
+              <option value="Insuficiente" ${entrega && entrega.escala === 'Insuficiente' ? 'selected' : ''}>Insuficiente</option>
+            </select>` : ''}
+          </div>
+        </div>
+      `;
+
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = yaEntrego ? '💾 Actualizar entrega' : '✅ Guardar entrega';
       }
     }
 
-    function mostrarAlumno(asistencia, entrega) {
-      resultadoDiv.innerHTML = `
-        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:8px; background:#f9fafb; border-radius:8px;">
-          <span style="flex:2; font-weight:500;">${SIREI.utils.escapeHtml(asistencia.nombreCompleto)}</span>
-          ${ev.calificacionNumerica ? `<input type="number" id="indCalif" placeholder="0-10" min="0" max="10" step="0.1" style="flex:1; min-width:70px; padding:4px 6px; border-radius:6px; border:1px solid #d1d5db;" ${entrega ? `value="${entrega.calificacion}"` : ''}>` : ''}
-          ${ev.escalaSuficiencia ? `<select id="indEscala" style="flex:1; min-width:100px; padding:4px 6px; border-radius:6px; border:1px solid #d1d5db;"><option value="">--</option><option value="Excelente" ${entrega&&entrega.escala==='Excelente'?'selected':''}>Excelente</option><option value="Suficiente" ${entrega&&entrega.escala==='Suficiente'?'selected':''}>Suficiente</option><option value="Insuficiente" ${entrega&&entrega.escala==='Insuficiente'?'selected':''}>Insuficiente</option></select>` : ''}
-          ${entrega ? `<span style="font-size:0.7rem; color:#10b981;">Hecho</span>` : `<span style="font-size:0.7rem; color:#ef4444;">Pendiente</span>`}
-          <button id="btnGuardarIndividual" class="btn btn-primary" style="padding:4px 10px; font-size:0.8rem;">Guardar</button>
-        </div>
-      `;
-      document.getElementById('btnGuardarIndividual').addEventListener('click', async () => {
-        const btn = document.getElementById('btnGuardarIndividual');
-        if (btn.disabled) return;
-        btn.disabled = true;
-        btn.textContent = 'Guardando...';
-        const califInput = document.getElementById('indCalif');
-        const escalaSelect = document.getElementById('indEscala');
-        const calificacion = califInput ? califInput.value.trim() : '';
-        const escala = escalaSelect ? escalaSelect.value : '';
-        const observaciones = obsTextarea ? obsTextarea.value.trim() : '';
-        const ok = await guardarEntregaIndividual(asistencia.curp, calificacion, escala, ev, observaciones);
-        btn.disabled = false;
-        btn.textContent = 'Guardar';
-        if (ok) {
-          const ts = new Date().toLocaleString('es-ES');
-          ultimosRegistros.unshift(`${ts} - ${asistencia.nombreCompleto}${calificacion?' ('+calificacion+')':''}${escala?' ['+escala+']':''}`);
-          if (navigator.vibrate) navigator.vibrate(100);
-          inputBusqueda.value = '';
-          limpiarObsEvidencia();
+    // ---- Guardado único: candado anti doble registro + cola en segundo plano ----
+    function guardarEntrega(alumno, saltarValidacion) {
+      if (!alumno) { SIREI.utils.mostrarToast('Elige un alumno primero.', 'error'); return; }
+      if (guardandoEntrega) return;               // <-- evita el doble registro
+      guardandoEntrega = true;
+
+      const califInput = document.getElementById('indCalif');
+      const escalaSelect = document.getElementById('indEscala');
+      const obs = elObs();
+      const calificacion = califInput ? califInput.value.trim() : '';
+      const escala = escalaSelect ? escalaSelect.value : '';
+      const observaciones = obs ? obs.value.trim() : '';
+
+      // Validación local: evita encolar algo que el servidor rechazaría
+      if (!saltarValidacion && ev.calificacionNumerica) {
+        const n = parseFloat(calificacion);
+        if (calificacion === '' || isNaN(n) || n < 0 || n > 10) {
+          SIREI.utils.mostrarToast('Escribe una calificación de 0 a 10.', 'error');
+          guardandoEntrega = false;
+          return;
         }
-        mostrarDetalleEvidencia(ev);
+      }
+      if (!saltarValidacion && ev.escalaSuficiencia && !escala) {
+        SIREI.utils.mostrarToast('Selecciona la escala de suficiencia.', 'error');
+        guardandoEntrega = false;
+        return;
+      }
+
+      const btn = elGuardar();
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ Guardando…'; }
+
+      // Se encola: la interfaz responde al instante y el registro se envía en segundo plano
+      SIREI.cola.agregar('registrarEntrega', {
+        idClase: idGrupo,
+        idEvidencia: ev.id,
+        nombreEvidencia: ev.nombreEvidencia,
+        curpAlumno: alumno.curp,
+        calificacion: calificacion,
+        escala: escala,
+        idDocente: idDocente,
+        observaciones: observaciones || ''
+      });
+
+      // Actualización optimista local
+      entregasPorAlumno[alumno.curp] = {
+        curpAlumno: alumno.curp,
+        idEvidencia: ev.id,
+        calificacion: calificacion,
+        escala: escala,
+        observaciones: observaciones
+      };
+
+      const detalle = (calificacion ? ' (' + calificacion + ')' : '') + (escala ? ' [' + escala + ']' : '');
+      SIREI.utils.mostrarToast('✅ ' + alumno.nombreCompleto + detalle);
+      ultimosRegistros.unshift(new Date().toLocaleString('es-ES') + ' - ' + alumno.nombreCompleto + detalle);
+      if (navigator.vibrate) navigator.vibrate(80);
+
+      limpiarObsEvidencia();
+      const busq = elBusqueda();
+      if (busq) busq.value = '';
+
+      guardandoEntrega = false;
+      mostrarDetalleEvidencia(ev, true);   // repinta sin reconsultar al servidor
+    }
+
+    // ---- Selección por texto ----
+    const inputBusqueda = elBusqueda();
+    if (inputBusqueda) {
+      inputBusqueda.addEventListener('input', function () {
+        const q = inputBusqueda.value.toLowerCase().trim();
+        if (!q) { seleccionarAlumno(null); return; }
+        const alumno = alumnosGrupo.find(function (a) {
+          return a.nombreCompleto.toLowerCase().includes(q) || (a.curp && a.curp.toLowerCase().includes(q));
+        });
+        if (!alumno) {
+          const t = elTarjeta();
+          if (t) t.innerHTML = '<p style="color:#ef4444; margin-top:8px;">Alumno no encontrado.</p>';
+          return;
+        }
+        seleccionarAlumno(alumno);
       });
     }
 
-    inputBusqueda.addEventListener('input', () => {
-      const q = inputBusqueda.value.toLowerCase().trim();
-      if (!q) { resultadoDiv.innerHTML = ''; return; }
-      const alumno = alumnosGrupo.find(a =>
-        a.nombreCompleto.toLowerCase().includes(q) || (a.curp && a.curp.toLowerCase().includes(q))
-      );
-      if (!alumno) { resultadoDiv.innerHTML = '<span style="color:#ef4444;">Alumno no encontrado.</span>'; return; }
-      mostrarAlumno(alumno, entregasPorAlumno[alumno.curp]);
+    // ---- Botón guardar ----
+    const btnGuardar = elGuardar();
+    if (btnGuardar) {
+      btnGuardar.addEventListener('click', function () { guardarEntrega(alumnoActual, false); });
+    }
+
+    // ---- Chips de acceso rápido ----
+    contenidoDiv.querySelectorAll('.chip-alumno-evidencia').forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        const alumno = alumnosGrupo.find(function (a) { return a.curp === chip.dataset.curp; });
+        if (!alumno) return;
+        const busq = elBusqueda();
+        if (busq) busq.value = alumno.nombreCompleto;
+        seleccionarAlumno(alumno);
+        if (respuestaRapida) {
+          guardarEntrega(alumno, true);
+        } else {
+          const calif = document.getElementById('indCalif');
+          if (calif) calif.focus();
+        }
+      });
     });
 
-    document.getElementById('btnAsignarEvidencia').addEventListener('click', async () => {
-      const btn = document.getElementById('btnAsignarEvidencia');
-      if (btn.disabled) return;
-      const q = inputBusqueda.value.trim();
-      if (!q) { SIREI.utils.mostrarToast('Busca un alumno primero.', 'error'); return; }
-      const alumno = alumnosGrupo.find(a =>
-        a.nombreCompleto.toLowerCase() === q.toLowerCase() || (a.curp && a.curp.toLowerCase() === q.toLowerCase())
-      );
-      if (!alumno) { SIREI.utils.mostrarToast('Alumno no encontrado. Usa nombre completo o CURP.', 'error'); return; }
-      const califInput = document.getElementById('indCalif');
-      const escalaSelect = document.getElementById('indEscala');
-      const calificacion = califInput ? califInput.value.trim() : '';
-      const escala = escalaSelect ? escalaSelect.value : '';
-      const observaciones = obsTextarea ? obsTextarea.value.trim() : '';
-      btn.disabled = true;
-      btn.textContent = 'Asignando...';
-      const ok = await guardarEntregaIndividual(alumno.curp, calificacion, escala, ev, observaciones);
-      btn.disabled = false;
-      btn.textContent = 'Asignar';
-      if (ok) {
-        const ts = new Date().toLocaleString('es-ES');
-        ultimosRegistros.unshift(`${ts} - ${alumno.nombreCompleto}${calificacion?' ('+calificacion+')':''}${escala?' ['+escala+']':''}`);
-        if (navigator.vibrate) navigator.vibrate(100);
-        inputBusqueda.value = '';
-        limpiarObsEvidencia();
-      }
-      mostrarDetalleEvidencia(ev);
-    });
-
-    // --- QR para evidencia (con debounce) ---
+    // ---- Lector QR (overlay arriba, alta sensibilidad, modo continuo) ----
     const btnEscanear = document.getElementById('btnEscanearEvidencia');
     if (btnEscanear) {
-      let qrReaderEv = null;
-      btnEscanear.addEventListener('click', () => {
-        const readerDiv = document.getElementById('qr-evidence-reader');
-        if (readerDiv.style.display === 'block') {
-          readerDiv.style.display = 'none';
-          if (qrReaderEv) { qrReaderEv.stop().catch(() => {}); qrReaderEv = null; }
-          btnEscanear.textContent = 'Escanear QR';
-          return;
-        }
-        readerDiv.style.display = 'block';
-        readerDiv.innerHTML = '';
-        btnEscanear.textContent = '❌ Cerrar cámara';
-        qrReaderEv = new Html5Qrcode("qr-evidence-reader");
-        qrReaderEv.start(
-          { facingMode: "environment" },
-          { fps: 10, qrbox: 250 },
-          async (decodedText) => {
-            // Cerrar la cámara INMEDIATAMENTE para no volver a leer el mismo código
-            if (qrReaderEv) { qrReaderEv.stop().catch(() => {}); qrReaderEv = null; }
-            readerDiv.style.display = 'none';
-            btnEscanear.textContent = 'Escanear QR';
-
-            const curp = decodedText.trim().toUpperCase();
-            const alumno = alumnosGrupo.find(a => a.curp === curp);
+      btnEscanear.addEventListener('click', function () {
+        SIREI.qr.abrir({
+          titulo: 'Registrar entrega',
+          subtitulo: ev.nombreEvidencia,
+          continuo: respuestaRapida,
+          onLeido: function (codigo) {
+            const curp = String(codigo).trim().toUpperCase();
+            const alumno = alumnosGrupo.find(function (a) { return a.curp === curp; });
             if (!alumno) {
-              SIREI.utils.mostrarToast('Alumno no encontrado.', 'error');
+              SIREI.utils.mostrarToast('Alumno no encontrado en este grupo.', 'error');
               return;
             }
-            inputBusqueda.value = alumno.nombreCompleto;
-            const observaciones = obsTextarea ? obsTextarea.value.trim() : '';
-            const ok = await guardarEntregaIndividual(curp, '', '', ev, observaciones);
-            if (ok) {
-              const ts = new Date().toLocaleString('es-ES');
-              ultimosRegistros.unshift(`${ts} - ${alumno.nombreCompleto} (QR)`);
-              if (navigator.vibrate) navigator.vibrate(100);
-              limpiarObsEvidencia();
+            const busq = elBusqueda();
+            if (busq) busq.value = alumno.nombreCompleto;
+            seleccionarAlumno(alumno);
+            if (respuestaRapida) {
+              guardarEntrega(alumno, true);
+            } else {
+              SIREI.utils.mostrarToast('Escribe la calificación y pulsa Guardar.', 'warning');
             }
-            mostrarDetalleEvidencia(ev);
-          },
-          () => {}
-        ).catch(() => {});
+          }
+        });
       });
     }
 
@@ -445,11 +549,12 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
         recognizer.continuous = false;
         recognizer.onresult = (event) => {
           const texto = event.results[0][0].transcript;
-          if (obsTextarea) {
-            obsTextarea.value += (obsTextarea.value ? ' ' : '') + texto;
+          const obs = elObs();
+          if (obs) {
+            obs.value += (obs.value ? ' ' : '') + texto;
             // Ajustar altura automáticamente
-            obsTextarea.style.height = 'auto';
-            obsTextarea.style.height = obsTextarea.scrollHeight + 'px';
+            obs.style.height = 'auto';
+            obs.style.height = obs.scrollHeight + 'px';
           }
         };
         recognizer.onerror = (err) => {
