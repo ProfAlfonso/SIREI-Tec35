@@ -235,50 +235,27 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
         if (e.key === 'Enter') asignarActitud();
       });
 
-      // Botón QR (cierra la cámara en la primera lectura para evitar duplicados)
-      let qrReader = null;
+      // Botón QR: overlay arriba, alta sensibilidad y modo continuo.
+      // Se puede escanear alumno tras alumno sin cerrar la cámara.
       document.getElementById('btnEscanearQR').addEventListener('click', () => {
-        const readerContainer = document.getElementById('qr-reader-actitud');
-        const btnEscanear = document.getElementById('btnEscanearQR');
-        if (qrReader) {
-          qrReader.stop().catch(() => {});
-          qrReader = null;
-          readerContainer.style.display = 'none';
-          btnEscanear.textContent = '📷 QR';
+        if (!document.getElementById('selectActitud').value) {
+          SIREI.utils.mostrarToast('Selecciona una actitud antes de escanear.', 'error');
           return;
         }
-        btnEscanear.textContent = '❌ Cerrar cámara';
-        readerContainer.style.display = 'block';
-        readerContainer.innerHTML = '';
-        qrReader = new Html5Qrcode("qr-reader-actitud");
-        const config = { fps: 10, qrbox: { width: 200, height: 200 } };
-        qrReader.start(
-          { facingMode: "environment" },
-          config,
-          async (decodedText) => {
-            // Cerrar la cámara INMEDIATAMENTE para no volver a leer el mismo código
-            if (qrReader) {
-              qrReader.stop().catch(() => {});
-              qrReader = null;
-            }
-            readerContainer.style.display = 'none';
-            document.getElementById('btnEscanearQR').textContent = '📷 QR';
-
-            const curp = decodedText.trim().toUpperCase();
+        SIREI.qr.abrir({
+          titulo: 'Asignar actitud',
+          subtitulo: 'Escanea el QR de cada alumno',
+          continuo: true,
+          onLeido: function (codigo) {
+            const curp = String(codigo).trim().toUpperCase();
             const alumno = alumnosGrupo.find(a => a.curp === curp);
             if (!alumno) {
               SIREI.utils.mostrarToast('Alumno no encontrado en este grupo.', 'error');
               return;
             }
             document.getElementById('inputAlumno').value = alumno.nombreCompleto;
-            await asignarActitudPorCURP(curp);
-          },
-          (err) => {}
-        ).catch(() => {
-          // Si falla el arranque de la cámara, restaurar el estado del botón
-          if (qrReader) { qrReader.stop().catch(() => {}); qrReader = null; }
-          readerContainer.style.display = 'none';
-          document.getElementById('btnEscanearQR').textContent = '📷 QR';
+            asignarActitudPorCURP(curp);
+          }
         });
       });
 
@@ -383,9 +360,12 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
     btnAsignar.disabled = true;
     btnAsignar.textContent = '⏳ Asignando...';
 
+    const act = actitudesDisponibles.find(a => a.id == idActitud);
+    const clasificacion = (idActitud === '__otra__') ? 'personalizada' : (act ? act.clasificacion : '');
+    const insignia = (idActitud === '__otra__') ? '✏️' : (act && act.insignia ? act.insignia : '🔲');
+
+    // Se encola: la interfaz responde al instante y el registro se envía en segundo plano
     const params = {
-      accion: 'asignarActitud',
-      token: token,
       idClase: idGrupo,
       idGrupo: idGrupo,
       idAsignatura: idAsignatura || '',
@@ -398,39 +378,33 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
     if (nombreActitudPersonalizada) {
       params.nombreActitudPersonalizada = nombreActitudPersonalizada;
     }
+    SIREI.cola.agregar('asignarActitud', params);
 
-    try {
-      const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams(params)
-      });
-      const result = await response.json();
-      if (result.success) {
-        SIREI.utils.mostrarToast('✅ ' + nombreAlumno + ' → ' + nombreActitud);
-        const nuevaAsignacion = result.asignacion;
-        asignacionesRecientes.unshift({
-          ...nuevaAsignacion,
-          curpAlumno: curp
-        });
-        mostrarHistorial(asignacionesRecientes);
-        document.getElementById('inputAlumno').value = '';
-        // Respetar la casilla "Mantener": solo se limpia si NO está marcada
-        const chkMantener = document.getElementById('chkMantenerObs');
-        if (!chkMantener || !chkMantener.checked) {
-          document.getElementById('observacionesInput').value = '';
-        }
-        if (navigator.vibrate) navigator.vibrate(100);
-      } else {
-        SIREI.utils.mostrarToast(result.message || 'Error al asignar', 'error');
-      }
-    } catch (e) {
-      console.error("❌ Error en asignación:", e);
-      SIREI.utils.mostrarToast('Error de conexión: ' + e.message, 'error');
-    } finally {
-      btnAsignar.disabled = false;
-      btnAsignar.textContent = '✅ Asignar';
+    // Actualización optimista del historial
+    asignacionesRecientes.unshift({
+      id: 'local_' + Date.now(),
+      idClase: idGrupo,
+      curpAlumno: curp,
+      nombreAlumno: nombreAlumno,
+      nombreActitud: nombreActitud,
+      clasificacion: clasificacion,
+      insignia: insignia,
+      notas: observaciones,
+      fechaAsignacion: new Date().toISOString()
+    });
+    mostrarHistorial(asignacionesRecientes);
+
+    SIREI.utils.mostrarToast('✅ ' + nombreAlumno + ' → ' + nombreActitud);
+    document.getElementById('inputAlumno').value = '';
+    // Respetar la casilla "Mantener": solo se limpia si NO está marcada
+    const chkMantener = document.getElementById('chkMantenerObs');
+    if (!chkMantener || !chkMantener.checked) {
+      document.getElementById('observacionesInput').value = '';
     }
+    if (navigator.vibrate) navigator.vibrate(100);
+
+    btnAsignar.disabled = false;
+    btnAsignar.textContent = '✅ Asignar';
   }
 
   // === Mostrar historial ===
