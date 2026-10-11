@@ -863,37 +863,12 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
   });
 
   document.getElementById('btnAbrirCamara').addEventListener('click', () => {
-    const readerContainer = document.getElementById('qr-reader-asistencia');
-    const btnCam = document.getElementById('btnAbrirCamara');
-    if (qrReaderAsistencia) {
-      qrReaderAsistencia.stop().catch(() => {});
-      qrReaderAsistencia = null;
-      readerContainer.style.display = 'none';
-      escaneoActivo = false;
-      btnCam.textContent = '📷 Abrir cámara';
-      return;
-    }
-    btnCam.textContent = '❌ Cerrar cámara';
-    readerContainer.style.display = 'block';
-    readerContainer.innerHTML = '';
-    qrReaderAsistencia = new Html5Qrcode("qr-reader-asistencia");
-    const config = { fps: 10, qrbox: { width: 200, height: 200 } };
-    qrReaderAsistencia.start(
-      { facingMode: "environment" },
-      config,
-      async (decodedText) => {
-        // Cerrar cámara INMEDIATAMENTE para no leer el mismo código repetido
-        if (qrReaderAsistencia) {
-          qrReaderAsistencia.stop().catch(() => {});
-          qrReaderAsistencia = null;
-        }
-        const readerContainer = document.getElementById('qr-reader-asistencia');
-        if (readerContainer) readerContainer.style.display = 'none';
-        const btnCam = document.getElementById('btnAbrirCamara');
-        if (btnCam) btnCam.textContent = '📷 Abrir cámara';
-        escaneoActivo = false;
-
-        const curp = decodedText.trim().toUpperCase();
+    SIREI.qr.abrir({
+      titulo: 'Pasar asistencia',
+      subtitulo: 'Escanea el QR de cada alumno',
+      continuo: true,
+      onLeido: (codigo) => {
+        const curp = String(codigo).trim().toUpperCase();
         const alumno = alumnosGrupo.find(a => a.curp === curp);
         if (!alumno) {
           SIREI.utils.mostrarToast('Alumno no encontrado en este grupo.', 'error');
@@ -902,33 +877,24 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
         const chkRetardo = document.getElementById('chkRetardo');
         const estado = chkRetardo && chkRetardo.checked ? 'Retardo' : 'Presente';
         const tipoToast = estado === 'Retardo' ? 'warning' : 'success';
-        SIREI.utils.mostrarToast(`${nombreParaMostrar(alumno)} - ${estado}`, tipoToast);
+        SIREI.utils.mostrarToast(nombreParaMostrar(alumno) + ' - ' + estado, tipoToast);
 
-        // Actualizar vista
+        // Actualizar la vista al instante
         actualizarEstadoAlumno(curp, estado);
-        if (navigator.vibrate) navigator.vibrate(50);
 
-        // Enviar al servidor (incluyendo idDocente)
-        fetch(API_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            accion: 'registrarAsistencia',
-            token: token,
-            idClase: claseActiva.idClase,
-            curpAlumno: curp,
-            estado: estado,
-            tipo: 'QR',
-            idDocente: idDocente,
-            idGrupo: claseActiva.idGrupo,
-            idAsignatura: claseActiva.idAsignatura,
-            periodo: claseActiva.periodo
-          })
-        }).catch(e => console.error(e));
-      },
-      (err) => {}
-    );
-    escaneoActivo = true;
+        // El registro se manda en segundo plano (no bloquea la interfaz)
+        SIREI.cola.agregar('registrarAsistencia', {
+          idClase: claseActiva.idClase,
+          curpAlumno: curp,
+          estado: estado,
+          tipo: 'QR',
+          idDocente: idDocente,
+          idGrupo: claseActiva.idGrupo,
+          idAsignatura: claseActiva.idAsignatura,
+          periodo: claseActiva.periodo
+        });
+      }
+    });
   });
 
   // ---- 3. ASISTENCIA MANUAL ----
@@ -966,22 +932,17 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
 
     actualizarEstadoAlumno(curp, estado);
 
-    fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        accion: 'registrarAsistencia',
-        token: token,
-        idClase: claseActiva.idClase,
-        curpAlumno: curp,
-        estado: estado,
-        tipo: 'Manual',
-        idDocente: idDocente,
-        idGrupo: claseActiva.idGrupo,
-        idAsignatura: claseActiva.idAsignatura,
-        periodo: claseActiva.periodo
-      })
-    }).catch(e => console.error(e));
+    // Registro en segundo plano
+    SIREI.cola.agregar('registrarAsistencia', {
+      idClase: claseActiva.idClase,
+      curpAlumno: curp,
+      estado: estado,
+      tipo: 'Manual',
+      idDocente: idDocente,
+      idGrupo: claseActiva.idGrupo,
+      idAsignatura: claseActiva.idAsignatura,
+      periodo: claseActiva.periodo
+    });
 
     input.value = '';
   });
@@ -1044,48 +1005,14 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     // Mostrar feedback inmediato
     SIREI.utils.mostrarToast('Guardando en segundo plano...', 'success');
 
-    // Enviar al servidor sin await (background)
-    fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        accion: 'registrarAsistenciasMasivas',
-        token: token,
-        idClase: claseActiva.idClase,
-        idDocente: idDocente,
-        idGrupo: claseActiva.idGrupo,
-        idAsignatura: claseActiva.idAsignatura,
-        periodo: claseActiva.periodo || '',
-        asistencias: JSON.stringify(asistenciasData)
-      })
-    })
-    .then(r => r.json())
-    .then(result => {
-      if (result.success) {
-        SIREI.utils.mostrarToast('Asistencias guardadas.');
-      } else {
-        SIREI.utils.mostrarToast('Error al guardar: ' + (result.message || ''), 'error');
-      }
-    })
-    .catch(() => {
-      SIREI.utils.mostrarToast('Error de conexión al guardar. Reintentando...', 'error');
-      // Reintentar una vez
-      setTimeout(() => {
-        fetch(API_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            accion: 'registrarAsistenciasMasivas',
-            token: token,
-            idClase: claseActiva.idClase,
-            idDocente: idDocente,
-            idGrupo: claseActiva.idGrupo,
-            idAsignatura: claseActiva.idAsignatura,
-            periodo: claseActiva.periodo || '',
-            asistencias: JSON.stringify(asistenciasData)
-          })
-        }).catch(() => SIREI.utils.mostrarToast('No se pudo guardar. Revisa conexión.', 'error'));
-      }, 3000);
+    // Enviar en segundo plano: si falla la conexión, se reintenta automáticamente
+    SIREI.cola.agregar('registrarAsistenciasMasivas', {
+      idClase: claseActiva.idClase,
+      idDocente: idDocente,
+      idGrupo: claseActiva.idGrupo,
+      idAsignatura: claseActiva.idAsignatura,
+      periodo: claseActiva.periodo || '',
+      asistencias: asistenciasData
     });
   });
 
@@ -1717,45 +1644,19 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     await procesarSalidaEntradaPorCurp(alumno.curp);
   });
 
-  // QR para salidas/entradas (P3: procesa automáticamente según modo activo)
+  // QR para salidas/entradas: overlay encima (sin hacer scroll) y modo continuo.
+  // onLeido devuelve la promesa, así el lector espera a que termine el registro
+  // antes de reactivar la cámara (evita duplicados).
   document.getElementById('btnEscanearSalidaFull').addEventListener('click', () => {
-    const readerContainer = document.getElementById('qr-reader-salida-full');
-    const btn = document.getElementById('btnEscanearSalidaFull');
-    if (qrReaderSalidaFull) {
-      qrReaderSalidaFull.stop().catch(() => {});
-      qrReaderSalidaFull = null;
-      readerContainer.style.display = 'none';
-      btn.textContent = '📷 QR';
-      return;
-    }
-    btn.textContent = '❌ Cerrar cámara';
-    readerContainer.style.display = 'block';
-    readerContainer.innerHTML = '';
-    qrReaderSalidaFull = new Html5Qrcode("qr-reader-salida-full");
-    const config = { fps: 10, qrbox: { width: 250, height: 250 } };
-    let qrProcesando = false;
-    qrReaderSalidaFull.start(
-      { facingMode: "environment" },
-      config,
-      (decodedText) => {
-        if (qrProcesando) return;
-        qrProcesando = true;
-        // Cerrar lector INMEDIATAMENTE para evitar duplicados (P3)
-        const cerrarLector = () => {
-          try {
-            if (qrReaderSalidaFull) { qrReaderSalidaFull.stop().catch(() => {}); qrReaderSalidaFull = null; }
-          } catch (e) {}
-          const rc = document.getElementById('qr-reader-salida-full');
-          if (rc) rc.style.display = 'none';
-          const bq = document.getElementById('btnEscanearSalidaFull');
-          if (bq) bq.textContent = '📷 QR';
-        };
-        cerrarLector();
-        const curp = String(decodedText || '').trim().toUpperCase();
-        procesarSalidaEntradaPorCurp(curp).finally(() => { qrProcesando = false; });
-      },
-      (err) => {}
-    );
+    SIREI.qr.abrir({
+      titulo: 'Entradas / Salidas',
+      subtitulo: 'Escanea el QR del alumno',
+      continuo: true,
+      onLeido: (codigo) => {
+        const curp = String(codigo || '').trim().toUpperCase();
+        return procesarSalidaEntradaPorCurp(curp);
+      }
+    });
   });
 
   // Botón Escape
