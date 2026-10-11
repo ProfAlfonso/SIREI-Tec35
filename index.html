@@ -17,6 +17,18 @@
   
   <!-- Estilos -->
   <link rel="stylesheet" href="css/stylesindex.css">
+
+  <!-- PWA: instalable, carga rápida y funciona sin conexión -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#1E3A8A">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <script>
+    if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('sw.js').catch(function () {});
+      });
+    }
+  </script>
 </head>
 <body>
   <div class="container">
