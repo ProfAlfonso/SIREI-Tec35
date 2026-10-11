@@ -597,33 +597,26 @@ window.cargarResultadosDocente = async function(container) {
       });
 
       cont.querySelectorAll('.select-editar-asistencia').forEach(select => {
-        select.addEventListener('change', async function() {
+        select.addEventListener('change', function() {
           const curp = this.dataset.curp;
           const fecha = this.dataset.fecha;
           const nuevoEstado = this.value;
           this.disabled = true;
-          try {
-            const res = await post('actualizarAsistencia', {
-              idDocente: idDocente,
-              curp: curp,
-              fecha: fecha,
-              idGrupo: grupoSeleccionado,
-              idAsignatura: asignaturaSeleccionada,
-              idPeriodo: periodoSeleccionado.id,
-              estado: nuevoEstado
-            });
-            if (res.success) {
-              SIREI.utils.mostrarToast('✅ Asistencia actualizada');
-              if (navigator.vibrate) navigator.vibrate(30);
-              actualizarAsistenciaLocal(curp, fecha, nuevoEstado);
-            } else {
-              SIREI.utils.mostrarToast(res.message || 'Error al actualizar', 'error');
-              renderAsistencias();
-            }
-          } catch (e) {
-            SIREI.utils.mostrarToast('Error de conexión: ' + e.message, 'error');
-            renderAsistencias();
-          }
+
+          // Se encola: la celda se actualiza al instante y el guardado va en segundo plano
+          SIREI.cola.agregar('actualizarAsistencia', {
+            idDocente: idDocente,
+            curp: curp,
+            fecha: fecha,
+            idGrupo: grupoSeleccionado,
+            idAsignatura: asignaturaSeleccionada,
+            idPeriodo: periodoSeleccionado.id,
+            estado: nuevoEstado
+          });
+
+          SIREI.utils.mostrarToast('✅ Asistencia actualizada');
+          if (navigator.vibrate) navigator.vibrate(30);
+          actualizarAsistenciaLocal(curp, fecha, nuevoEstado);
         });
       });
     }
