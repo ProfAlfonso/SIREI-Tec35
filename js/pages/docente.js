@@ -350,100 +350,139 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
       <button class="btn-flotante-salidas" id="btnAbrirSalidas">🚪</button>
     </div>
 
-    <!-- Modal de Salidas (REDISEÑADO para móviles) -->
+    <!-- ============================================================
+         Modal de Entradas / Salidas — flujo autoadministrable por alumnos
+         Pantalla 1: menú · 2: motivo · 3A: baño · 3B: otro · Entrada
+         ============================================================ -->
+    <style>
+      #modalSalidasFull { position:fixed; inset:0; background:#0f172a; z-index:2000; display:none; }
+      #modalSalidasFull.abierto { display:block; }
+      #modalSalidasFull .msal-shell { display:flex; flex-direction:column; height:100%; background:#fff; }
+      #modalSalidasFull .msal-header { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:3px 10px; min-height:34px; background:#f8fafc; border-bottom:1px solid #e5e7eb; flex:0 0 auto; }
+      #modalSalidasFull .msal-header-title { font-size:0.82rem; font-weight:700; color:#374151; }
+      #modalSalidasFull .msal-cerrar { background:none; border:none; font-size:1.15rem; line-height:1; cursor:pointer; padding:2px 8px; color:#111827; }
+      #modalSalidasFull .msal-body { flex:1 1 auto; overflow-y:auto; padding:12px; background:#fff; }
+      #modalSalidasFull .msal-pantalla { display:none; }
+      #modalSalidasFull .msal-titulo { margin:0 0 14px 0; font-size:1.2rem; font-weight:800; color:#111827; text-align:center; }
+      #modalSalidasFull .msal-subtitulo { margin:18px 0 8px 0; font-size:0.78rem; font-weight:800; letter-spacing:0.06em; color:#6b7280; text-transform:uppercase; }
+      #modalSalidasFull .msal-atras { display:inline-flex; align-items:center; gap:6px; min-height:40px; padding:8px 14px; margin-bottom:12px; background:#f3f4f6; border:1px solid #e5e7eb; border-radius:10px; font-size:0.95rem; font-weight:700; color:#374151; cursor:pointer; }
+      #modalSalidasFull .msal-btn-grande { display:flex; align-items:center; justify-content:center; gap:10px; width:100%; min-height:68px; margin-bottom:12px; border:none; border-radius:14px; font-size:1.05rem; font-weight:800; color:#fff; cursor:pointer; letter-spacing:0.02em; }
+      #modalSalidasFull .msal-btn-salida { background:#f59e0b; }
+      #modalSalidasFull .msal-btn-entrada { background:#10b981; }
+      #modalSalidasFull .msal-btn-bano { background:#3b82f6; }
+      #modalSalidasFull .msal-btn-otro { background:#8b5cf6; }
+      #modalSalidasFull .msal-estado { background:#f9fafb; border:1px solid #e5e7eb; border-radius:12px; padding:10px 12px; }
+      #modalSalidasFull .msal-bano-linea { font-size:0.95rem; font-weight:700; margin-bottom:8px; }
+      #modalSalidasFull .msal-fuera-item { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 0; border-bottom:1px solid #f3f4f6; flex-wrap:wrap; }
+      #modalSalidasFull .msal-fuera-nombre { font-weight:700; font-size:0.95rem; color:#111827; }
+      #modalSalidasFull .msal-fuera-motivo { font-size:0.8rem; color:#6b7280; }
+      #modalSalidasFull .msal-crono { font-size:1rem; font-weight:800; color:#10b981; font-variant-numeric:tabular-nums; }
+      #modalSalidasFull .msal-crono-alerta { color:#dc2626 !important; }
+      #modalSalidasFull .msal-badge-def { font-size:0.72rem; font-weight:800; color:#6d28d9; background:#ede9fe; padding:3px 10px; border-radius:999px; white-space:nowrap; }
+      #modalSalidasFull .msal-btn-escape { min-height:38px; padding:6px 12px; background:#dc2626; color:#fff; border:none; border-radius:999px; font-size:0.8rem; font-weight:800; cursor:pointer; }
+      #modalSalidasFull .msal-bloqueo { background:#fef2f2; border:1px solid #fecaca; border-radius:12px; padding:14px; text-align:center; }
+      #modalSalidasFull .msal-bloqueo-icono { font-size:2.2rem; line-height:1; }
+      #modalSalidasFull .msal-bloqueo-titulo { font-weight:800; font-size:1.05rem; color:#991b1b; margin:8px 0 4px 0; }
+      #modalSalidasFull .msal-bloqueo-sub { font-size:0.9rem; color:#7f1d1d; }
+      #modalSalidasFull .msal-bloqueo-crono { font-size:1.5rem; font-weight:800; color:#dc2626; font-variant-numeric:tabular-nums; margin:6px 0; }
+      #modalSalidasFull .msal-btn-definitiva { width:100%; min-height:48px; margin-top:10px; background:#6d28d9; color:#fff; border:none; border-radius:10px; font-size:0.95rem; font-weight:800; cursor:pointer; }
+      #modalSalidasFull .msal-picker-row { display:flex; gap:8px; margin-bottom:10px; }
+      #modalSalidasFull .msal-input { flex:1 1 auto; min-width:0; min-height:48px; padding:10px 12px; border:1px solid #d1d5db; border-radius:10px; font-size:16px; }
+      #modalSalidasFull .msal-btn-qr { flex:0 0 auto; min-height:48px; padding:10px 16px; background:#6b7280; color:#fff; border:none; border-radius:10px; font-size:0.95rem; font-weight:800; cursor:pointer; }
+      #modalSalidasFull .msal-btn-registrar { width:100%; min-height:52px; background:#1E3A8A; color:#fff; border:none; border-radius:12px; font-size:1rem; font-weight:800; cursor:pointer; }
+      #modalSalidasFull .msal-chip { display:inline-flex; align-items:center; gap:8px; padding:8px 14px; border-radius:999px; background:#eff6ff; color:#1e40af; font-weight:800; font-size:0.95rem; margin-bottom:12px; }
+      #modalSalidasFull .msal-campo { margin-bottom:12px; }
+      #modalSalidasFull .msal-label { display:block; font-size:0.85rem; font-weight:700; color:#374151; margin-bottom:6px; }
+      #modalSalidasFull .msal-input-motivo { width:100%; min-height:48px; padding:10px 12px; border:1px solid #d1d5db; border-radius:10px; font-size:16px; box-sizing:border-box; }
+      #modalSalidasFull .msal-check { display:flex; align-items:center; gap:10px; min-height:48px; padding:8px 12px; background:#f9fafb; border:1px solid #e5e7eb; border-radius:10px; font-size:1rem; font-weight:700; cursor:pointer; margin-bottom:12px; }
+      #modalSalidasFull .msal-historial { margin-top:14px; border-top:1px solid #e5e7eb; padding-top:10px; }
+      #modalSalidasFull .msal-historial summary { cursor:pointer; font-size:0.85rem; font-weight:700; color:#4b5563; }
+      #modalSalidasFull #listaHistorial { max-height:180px; overflow-y:auto; background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:8px 10px; color:#1f2937; margin-top:8px; }
+    </style>
+
     <div class="modal-salidas-full" id="modalSalidasFull">
-      <div style="display:flex; flex-direction:column; width:100%; height:100%; background:transparent; padding:0;">
-      <!-- Cabecera (compacta para móviles) -->
-<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 12px; background:#f8fafc; border-bottom:1px solid #e5e7eb; flex-shrink:0; min-height:40px;">
-  <h2 style="margin:0; font-size:0.95rem; display:flex; align-items:center; gap:6px;">
-    <span style="font-size:1.2rem;">🚪</span> Entradas / Salidas
-    <span id="iconoBano" title="Estado del baño" style="font-size:1.1rem; margin-left:4px;">🚻✅</span>
-  </h2>
-  <button id="btnCerrarSalidasFull" style="background:none; border:none; font-size:1.3rem; cursor:pointer; padding:0 6px;">✕</button>
-</div>
-      <div id="confirmacionSalidaEntrada" style="display:none;"></div>
-
-      <!-- Contenido del modal (scrollable) -->
-      <div style="padding:16px 20px; flex:1; overflow-y:auto;">
-
-        <!-- Resumen de alumnos fuera -->
-        <div id="estado-salidas" style="margin-bottom:20px; padding:12px; background:#fef3c7; border-radius:10px; border-left:4px solid #f59e0b;">
-          <p style="margin:0; font-weight:600; color:#92400e;">📤 Alumnos fuera de clase:</p>
-          <div id="listaAlumnosFuera" style="margin-top:6px; font-size:0.95rem;">
-            <span style="color:#6b7280;">Cargando...</span>
-          </div>
+      <div class="msal-shell">
+        <!-- Encabezado MUY compacto: una sola línea delgada -->
+        <div class="msal-header">
+          <span class="msal-header-title">🚪 Entradas / Salidas</span>
+          <span style="display:flex; align-items:center; gap:10px;">
+            <span id="iconoBano" title="Estado del baño" style="font-size:1.05rem;">🚻✅</span>
+            <button type="button" id="btnCerrarSalidasFull" class="msal-cerrar" title="Cerrar">✕</button>
+          </span>
         </div>
 
-        <!-- Botón Escape (oculto por defecto) -->
-        <button id="btnEscapeSalida" style="display:none; margin-top:10px; padding:10px 16px; background:#dc2626; color:white; border:none; border-radius:8px; font-weight:600; cursor:pointer; width:100%;">
-          🏃 Registrar como Escape (ir a Actitudinal)
-        </button>
+        <!-- Pantalla de confirmación (tapa todo; autocierre 3 s) -->
+        <div id="confirmacionSalidaEntrada" style="display:none;"></div>
 
-        <!-- Botones de acción (grandes y táctiles) -->
-        <div style="display:flex; gap:12px; margin-bottom:20px;">
-          <button id="btnAccionSalida" class="btn-salida" style="flex:1; padding:16px; background:#f59e0b; color:white; border:none; border-radius:12px; font-size:1.1rem; font-weight:600; cursor:pointer; box-shadow:0 2px 8px rgba(245,158,11,0.3); display:flex; align-items:center; justify-content:center; gap:8px;">
-            📤 Registrar Salida
-          </button>
-          <button id="btnAccionEntrada" class="btn-entrada" style="flex:1; padding:16px; background:#10b981; color:white; border:none; border-radius:12px; font-size:1.1rem; font-weight:600; cursor:pointer; box-shadow:0 2px 8px rgba(16,185,129,0.3); display:flex; align-items:center; justify-content:center; gap:8px;">
-            📥 Registrar Entrada
-          </button>
-        </div>
+        <div class="msal-body">
+          <datalist id="msalAlumnosList">${datalistOptions}</datalist>
 
-        <!-- Sección de motivo (solo para salida) -->
-        <div id="seccion-motivo" style="display:none; margin-bottom:16px; padding:16px; background:#f9fafb; border-radius:12px; border:1px solid #e5e7eb;">
-          <p style="font-weight:600; margin:0 0 12px 0;">Selecciona el motivo:</p>
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-            <button class="boton-motivo" data-motivo="Baño" style="padding:14px; background:#fff; border:2px solid #e5e7eb; border-radius:10px; font-size:1rem; cursor:pointer; display:flex; align-items:center; gap:10px; justify-content:center;">
-              <span style="font-size:1.5rem;">🚻</span> Baño
-            </button>
-            <button class="boton-motivo otro" data-motivo="Otro" style="grid-column: span 2; padding:14px; background:#fff; border:2px dashed #e5e7eb; border-radius:10px; font-size:1rem; cursor:pointer; display:flex; align-items:center; gap:10px; justify-content:center;">
-              <span style="font-size:1.5rem;">📝</span> Otro
-            </button>
-          </div>
-          <div class="campo-otro-motivo" id="campoOtroMotivo" style="display:none; margin-top:12px;">
-            <label style="font-weight:500; display:block; margin-bottom:4px;">Especifica el motivo:</label>
-            <textarea id="textoOtroMotivo" rows="2" style="width:100%; padding:10px; border-radius:8px; border:1px solid #d1d5db; font-size:1rem;"></textarea>
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-top:10px;">
-              <label style="display:flex; align-items:center; gap:8px; font-weight:500; font-size:0.9rem; cursor:pointer;">
-                <input type="checkbox" id="chkRegresa" checked style="width:18px; height:18px; accent-color:#10b981;"> ¿Va a regresar?
-              </label>
-              <label style="display:flex; align-items:center; gap:6px; font-weight:500; font-size:0.8rem; cursor:pointer;">
-                <input type="checkbox" id="chkMantenerMotivo" style="width:16px; height:16px; accent-color:#1E3A8A;"> Mantener
-              </label>
+          <!-- ================= PANTALLA 1: MENÚ PRINCIPAL ================= -->
+          <section class="msal-pantalla" id="msal-pantalla-1">
+            <h2 class="msal-titulo">¿Qué desea registrar?</h2>
+            <button type="button" id="btnAccionSalida" class="msal-btn-grande msal-btn-salida">📤 REGISTRAR SALIDA</button>
+            <button type="button" id="btnAccionEntrada" class="msal-btn-grande msal-btn-entrada">📥 REGISTRAR ENTRADA</button>
+
+            <h3 class="msal-subtitulo">Estado actual</h3>
+            <div class="msal-estado">
+              <div class="msal-bano-linea" id="msalBanoLinea">🚻✅ Baño libre</div>
+              <div id="listaAlumnosFuera"><span style="color:#6b7280;">Cargando…</span></div>
             </div>
+
+            <details class="msal-historial">
+              <summary>📋 Historial reciente <span id="contadorHistorial" style="font-weight:400; color:#6b7280;"></span></summary>
+              <div id="listaHistorial"><p style="color:#6b7280; font-size:0.9rem;">Cargando historial…</p></div>
+            </details>
+          </section>
+
+          <!-- ================= PANTALLA 2: MOTIVO ================= -->
+          <section class="msal-pantalla" id="msal-pantalla-2">
+            <button type="button" class="msal-atras" data-back="1">← Atrás</button>
+            <h2 class="msal-titulo">¿A dónde va?</h2>
+            <button type="button" id="btnMotivoBano" class="msal-btn-grande msal-btn-bano">🚻 BAÑO</button>
+            <button type="button" id="btnMotivoOtro" class="msal-btn-grande msal-btn-otro">📝 OTRO</button>
+          </section>
+
+          <!-- ================= PANTALLA 3A: BAÑO ================= -->
+          <section class="msal-pantalla" id="msal-pantalla-3a">
+            <button type="button" class="msal-atras" data-back="2">← Atrás</button>
+            <div id="msal3aBloqueo" class="msal-bloqueo" style="display:none;"></div>
+            <div id="msal3aForm" style="display:none;">
+              <div class="msal-chip">🚻 Baño</div>
+              <div class="msal-picker-slot"></div>
+            </div>
+          </section>
+
+          <!-- ================= PANTALLA 3B: OTRO MOTIVO ================= -->
+          <section class="msal-pantalla" id="msal-pantalla-3b">
+            <button type="button" class="msal-atras" data-back="2">← Atrás</button>
+            <div class="msal-campo">
+              <label class="msal-label" for="msalMotivoEspecifico">Motivo específico *</label>
+              <input type="text" id="msalMotivoEspecifico" class="msal-input-motivo" placeholder="Ej: cita con dirección" autocomplete="off">
+            </div>
+            <label class="msal-check"><input type="checkbox" id="chkRegresa" checked style="width:20px; height:20px; accent-color:#10b981;"> ¿Va a regresar?</label>
+            <div id="msal3bBloqueo" class="msal-bloqueo" style="display:none;"></div>
+            <div id="msal3bForm">
+              <div class="msal-picker-slot"></div>
+            </div>
+          </section>
+
+          <!-- ================= PANTALLA ENTRADA ================= -->
+          <section class="msal-pantalla" id="msal-pantalla-entrada">
+            <button type="button" class="msal-atras" data-back="1">← Atrás</button>
+            <h2 class="msal-titulo">📥 Registrar entrada</h2>
+            <div class="msal-picker-slot"></div>
+          </section>
+
+          <!-- Bloque único de búsqueda/QR (se mueve a la pantalla activa) -->
+          <div id="msalPicker" style="display:none;">
+            <div class="msal-picker-row">
+              <input type="text" id="msalInputAlumno" class="msal-input" list="msalAlumnosList" placeholder="Nombre o CURP…" autocomplete="off">
+              <button type="button" id="msalBtnQR" class="msal-btn-qr">📷 QR</button>
+            </div>
+            <button type="button" id="msalBtnRegistrar" class="msal-btn-registrar">✅ Registrar</button>
           </div>
         </div>
-
-        <!-- Selección de alumno + QR -->
-        <div style="margin-bottom:16px;">
-          <label style="font-weight:500; display:block; margin-bottom:4px;">👤 Alumno (nombre o CURP)</label>
-          <div style="display:flex; gap:10px; align-items:center;">
-            <input type="text" id="inputSalidaFull" list="${datalistId}" placeholder="Ej: Juan Pérez o CURP" style="flex:3; padding:12px; border-radius:10px; border:1px solid #d1d5db; font-size:1rem;">
-            <datalist id="${datalistId}">${datalistOptions}</datalist>
-            <button id="btnEscanearSalidaFull" style="flex:1; padding:12px; background:#6b7280; color:white; border:none; border-radius:10px; font-size:1rem; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">
-              📷 QR
-            </button>
-          </div>
-          <div id="qr-reader-salida-full" style="width:100%; max-width:300px; margin:10px auto; display:none;"></div>
-        </div>
-
-        <!-- Botón Confirmar -->
-        <div style="margin-top:12px;">
-          <button id="btnConfirmarSalidaEntrada" class="btn-confirmar" style="width:100%; padding:14px; background:#1E3A8A; color:white; border:none; border-radius:10px; font-size:1rem; font-weight:600; cursor:pointer;">
-            ✅ Confirmar
-          </button>
-        </div>
-
-        <!-- Historial de movimientos -->
-        <div id="historial-salidas" style="margin-top:16px; border-top:2px solid #e5e7eb; padding-top:12px;">
-          <h3 style="font-size:1rem; margin:0 0 8px 0; display:flex; align-items:center; gap:6px; color:#1f2937;">
-            <span>📋</span> Historial reciente
-            <span id="contadorHistorial" style="font-size:0.75rem; color:#4b5563; font-weight:400;"></span>
-          </h3>
-          <div id="listaHistorial" style="max-height:200px; overflow-y:auto; background:#ffffff; border:1px solid #e5e7eb; border-radius:8px; padding:8px 10px; color:#1f2937;">
-            <p style="color:#4b5563; font-size:0.9rem;">Cargando historial...</p>
-          </div>
-      </div>
       </div>
     </div>
   `;
@@ -620,7 +659,6 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
 
 function configurarEventosPaneles(container, idDocente, claseActiva, token, alumnosGrupo, grupoInfo, asignaturaInfo) {
   let qrReaderAsistencia = null;
-  let qrReaderSalidaFull = null;
   let escaneoActivo = false;
 
   // Orden de la lista de asistencia: 'apellido' (por defecto) o 'nombre'
@@ -1016,372 +1054,25 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     });
   });
 
-  // ---- 8. SALIDAS (REDISEÑADO Y CORREGIDO) ----
-  // (Se mantiene la lógica de actualización de estado, pero se asegura que el modal sea responsive)
-  qrReaderSalidaFull = null;
+  // ============================================================
+  //  8. ENTRADAS / SALIDAS — flujo autoadministrable por el alumno
+  //     Pantalla 1 (menú) · 2 (motivo) · 3A (baño) · 3B (otro) · Entrada
+  //     + pantalla de confirmación (3 s) que vuelve a la Pantalla 1.
+  // ============================================================
 
-  // Función para actualizar el estado y el historial sin recargar
-  async function actualizarEstadoSalidas() {
-    try {
-      const responseFuera = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          accion: 'obtenerSalidasClase',
-          token: token,
-          idClase: claseActiva.idClase
-        })
-      });
-      const dataFuera = await responseFuera.json();
-      const listaDiv = document.getElementById('listaAlumnosFuera');
-      const btnEscape = document.getElementById('btnEscapeSalida');
+  let msalEstado = { fuera: [], fueraDefinitivo: [], banoOcupado: false };
+  let msalPantalla = '1';
+  let msalTick = null;
 
-      if (dataFuera.success) {
-        const todas = dataFuera.salidas || [];
-        const fuera = todas.filter(s => s.estado === 'Fuera');
-        const fueraDefinitivo = todas.filter(s => s.estado === 'Fuera definitivo');
-        // P4: icono de baño (solo cuenta Fuera con regreso; Fuera definitivo nunca es baño)
-        try {
-          const banoOcupado = fuera.some(s => String(s.motivo || '').toLowerCase() === 'baño');
-          const iconoBano = document.getElementById('iconoBano');
-          if (iconoBano) {
-            iconoBano.textContent = banoOcupado ? '🚻🚫' : '🚻✅';
-            iconoBano.style.color = banoOcupado ? '#dc2626' : '#16a34a';
-            iconoBano.title = banoOcupado ? 'Baño ocupado' : 'Baño desocupado';
-          }
-        } catch (e) {}
+  function msalEl(id) { return document.getElementById(id); }
+  function msalNorm(v) { return String(v == null ? '' : v).trim().toLowerCase(); }
 
-        // Limpiar cronómetro anterior
-        if (window._intervalSalida) {
-          clearInterval(window._intervalSalida);
-          window._intervalSalida = null;
-        }
-        if (btnEscape) btnEscape.style.display = 'none';
-
-        if (fuera.length === 0 && fueraDefinitivo.length === 0) {
-          listaDiv.innerHTML = '<span style="color:#10b981;">✅ Todos los alumnos están dentro.</span>';
-        } else {
-          let html = '';
-
-          // Salidas definitivas: sin cronómetro, no esperan entrada y no bloquean otras salidas
-          fueraDefinitivo.forEach(sd => {
-            const alumnoD = alumnosGrupo.find(a => a.curp === sd.curp);
-            const nombreD = alumnoD ? SIREI.utils.escapeHtml(alumnoD.nombreCompleto) : SIREI.utils.escapeHtml(sd.curp || '');
-            const motivoD = SIREI.utils.escapeHtml(sd.motivo || 'Sin motivo') + (sd.motivo_otro ? ' (' + SIREI.utils.escapeHtml(sd.motivo_otro) + ')' : '');
-            html += `
-              <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; padding:6px 0; border-bottom:1px solid #f3f4f6;">
-                <span><strong>${nombreD}</strong> - ${motivoD}</span>
-                <span style="font-size:0.78rem; font-weight:700; color:#6d28d9; background:#ede9fe; padding:2px 10px; border-radius:12px;">Sin regreso</span>
-              </div>`;
-          });
-
-          // Alumno que va a regresar: cronómetro y opción de escape
-          if (fuera.length > 0) {
-            const s = fuera[0];
-            const alumno = alumnosGrupo.find(a => a.curp === s.curp);
-            const nombre = alumno ? SIREI.utils.escapeHtml(alumno.nombreCompleto) : s.curp;
-            let salidaTimestamp = s.salidaFormateada || s.salidaTimestamp || '';
-
-            if (!salidaTimestamp) {
-              html += `
-                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; padding:6px 0; border-bottom:1px solid #f3f4f6;">
-                  <span><strong>${nombre}</strong> - Motivo: ${s.motivo || 'Sin motivo'}</span>
-                  <span id="cronometroSalida" style="font-size:1.2rem; font-weight:bold; color:#6b7280;">--:--</span>
-                </div>`;
-            } else {
-              html += `
-                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; padding:6px 0; border-bottom:1px solid #f3f4f6;">
-                  <span><strong>${nombre}</strong> - Motivo: ${s.motivo || 'Sin motivo'}</span>
-                  <span id="cronometroSalida" style="font-size:1.2rem; font-weight:bold; color:#10b981;">00:00</span>
-                </div>`;
-
-              const actualizarCrono = () => {
-                const crono = document.getElementById('cronometroSalida');
-                if (!crono) return;
-                
-                try {
-                  const ahora = new Date();
-                  let fechaSalida;
-                  if (salidaTimestamp.includes('T')) {
-                    fechaSalida = new Date(salidaTimestamp);
-                  } else if (salidaTimestamp.includes('/')) {
-                    const partes = salidaTimestamp.split(' ');
-                    if (partes.length < 2) { crono.textContent = '--:--'; return; }
-                    const fechaPartes = partes[0].split('/');
-                    const horaPartes = partes[1].split(':');
-                    if (fechaPartes.length < 3 || horaPartes.length < 3) { crono.textContent = '--:--'; return; }
-                    
-                    fechaSalida = new Date(
-                      parseInt(fechaPartes[2]),      
-                      parseInt(fechaPartes[1]) - 1,   
-                      parseInt(fechaPartes[0]),       
-                      parseInt(horaPartes[0]),        
-                      parseInt(horaPartes[1]),        
-                      parseInt(horaPartes[2])         
-                    );
-                  } else {
-                    crono.textContent = '--:--'; return;
-                  }
-                  
-                  const diffMs = ahora - fechaSalida;
-                  if (diffMs < 0 || isNaN(fechaSalida.getTime())) { 
-                    crono.textContent = '00:00'; 
-                    return; 
-                  }
-                  const totalSegundos = Math.floor(diffMs / 1000);
-                  const minutos = Math.floor(totalSegundos / 60);
-                  const segundos = totalSegundos % 60;
-                  const minutosStr = String(minutos).padStart(2, '0');
-                  const segundosStr = String(segundos).padStart(2, '0');
-                  crono.textContent = `${minutosStr}:${segundosStr}`;
-
-                  if (totalSegundos > 300) {
-                    crono.style.color = '#ef4444';
-                    if (btnEscape) {
-                      btnEscape.style.display = 'block';
-                      btnEscape.dataset.curp = s.curp;
-                    }
-                  } else {
-                    crono.style.color = '#10b981';
-                    if (btnEscape) btnEscape.style.display = 'none';
-                  }
-                } catch (e) {
-                  console.error('Error en cronómetro:', e);
-                  if (crono) crono.textContent = '--:--';
-                }
-              };
-
-              actualizarCrono();
-              window._intervalSalida = setInterval(actualizarCrono, 1000);
-            }
-          }
-
-          listaDiv.innerHTML = html;
-        }
-      }
-
-      // Obtener historial
-      const responseHist = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          accion: 'obtenerHistorialSalidas',
-          token: token,
-          idClase: claseActiva.idClase,
-          limite: 15
-        })
-      });
-      const dataHist = await responseHist.json();
-      if (dataHist.success) {
-        const movs = dataHist.movimientos || [];
-        const contador = document.getElementById('contadorHistorial');
-        if (contador) contador.textContent = `(${movs.length} registros)`;
-        const listaHist = document.getElementById('listaHistorial');
-        if (movs.length === 0) {
-          listaHist.innerHTML = '<p style="color:#6b7280; font-size:0.9rem;">No hay movimientos registrados.</p>';
-        } else {
-          listaHist.innerHTML = movs.map(m => {
-            const alumno = alumnosGrupo.find(a => a.curp === m.curp);
-            const nombre = alumno ? SIREI.utils.escapeHtml(alumno.nombreCompleto) : SIREI.utils.escapeHtml(m.curp || '');
-            const estado = m.estado || '';
-            const esDefinitivo = estado === 'Fuera definitivo';
-            const esEscape = estado === 'Escape';
-            const esFuera = estado === 'Fuera';
-            const esDentro = estado === 'Dentro';
-            let icono = '🚪✅'; let color = '#065f46';
-            if (esDefinitivo) { icono = '🚪🚫'; color = '#6d28d9'; }
-            else if (esEscape) { icono = '🏃'; color = '#dc2626'; }
-            else if (esFuera) { icono = '🚪'; color = '#92400e'; }
-            const fecha = SIREI.utils.escapeHtml(m.salidaFormateada || m.salidaTimestamp || '');
-            const motivoExtra = m.motivo_otro ? ` (${SIREI.utils.escapeHtml(m.motivo_otro)})` : '';
-            const motivoTxt = SIREI.utils.escapeHtml(m.motivo || '') + motivoExtra;
-            // P2: duración clara según estado
-            let duracionHtml = '';
-            if (esDentro) {
-              duracionHtml = m.duracion
-                ? `<span style="font-size:0.8rem; font-weight:700; color:#059669; margin-left:4px;">⏱️ ${SIREI.utils.escapeHtml(m.duracion)}</span>`
-                : '<span style="font-size:0.75rem; color:#6b7280; margin-left:4px;">⏱️ --:--</span>';
-            } else if (esFuera) {
-              duracionHtml = '<span style="font-size:0.75rem; font-weight:700; color:#f59e0b; margin-left:4px;">Aún fuera</span>';
-            } else if (esEscape || esDefinitivo) {
-              duracionHtml = '<span style="font-size:0.75rem; font-weight:700; color:#6b7280; margin-left:4px;">Sin regreso</span>';
-            }
-            return `<div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #f3f4f6; font-size:0.9rem;">
-              <div>
-                <span style="font-weight:500;">${nombre}</span>
-                <span style="font-size:0.75rem; color:#6b7280; margin-left:8px;">${motivoTxt}</span>
-              </div>
-              <div style="text-align:right;">
-                <span style="color:${color};">${icono}</span>
-                <span style="font-size:0.75rem; color:#6b7280;">${fecha}</span><br>
-                ${duracionHtml}
-              </div>
-            </div>`;
-          }).join('');
-        }
-      }
-    } catch (e) {
-      console.error('Error al actualizar estado de salidas:', e);
-    }
+  function msalNombrePorCurp(curp) {
+    const a = alumnosGrupo.find(function (x) { return x.curp === curp; });
+    return a ? a.nombreCompleto : String(curp || '');
   }
 
-  // Resalta visualmente la acción activa (Salida o Entrada)
-  function marcarAccionActiva(accion) {
-    const btnSalida = document.getElementById('btnAccionSalida');
-    const btnEntrada = document.getElementById('btnAccionEntrada');
-    if (!btnSalida || !btnEntrada) return;
-    if (accion === 'salida') {
-      btnSalida.style.opacity = '1';
-      btnSalida.style.outline = '3px solid #1E3A8A';
-      btnSalida.style.boxShadow = '0 0 0 2px #fff, 0 0 0 5px #1E3A8A';
-      btnEntrada.style.opacity = '0.45';
-      btnEntrada.style.outline = 'none';
-      btnEntrada.style.boxShadow = 'none';
-    } else {
-      btnEntrada.style.opacity = '1';
-      btnEntrada.style.outline = '3px solid #1E3A8A';
-      btnEntrada.style.boxShadow = '0 0 0 2px #fff, 0 0 0 5px #1E3A8A';
-      btnSalida.style.opacity = '0.45';
-      btnSalida.style.outline = 'none';
-      btnSalida.style.boxShadow = 'none';
-    }
-  }
-
-  // Reinicia el estado del modal (solo al cerrar o tras éxito). P9.
-  function reiniciarEstadoModalSalidas() {
-    const modal = document.getElementById('modalSalidasFull');
-    if (modal) {
-      modal.dataset.accion = 'salida';
-      modal.dataset.motivo = '';
-    }
-    const campoOtro = document.getElementById('campoOtroMotivo');
-    if (campoOtro) campoOtro.style.display = 'none';
-    const inputSal = document.getElementById('inputSalidaFull');
-    if (inputSal) inputSal.value = '';
-    const txtOtro = document.getElementById('textoOtroMotivo');
-    if (txtOtro) txtOtro.value = '';
-    const chkRegresa = document.getElementById('chkRegresa');
-    if (chkRegresa) chkRegresa.checked = true;
-    const chkMant = document.getElementById('chkMantenerMotivo');
-    if (chkMant) chkMant.checked = false;
-    document.querySelectorAll('.boton-motivo').forEach(b => { b.style.borderColor = '#e5e7eb'; });
-    const seccion = document.getElementById('seccion-motivo');
-    if (seccion) seccion.style.display = 'block';
-    const btnConfirm = document.getElementById('btnConfirmarSalidaEntrada');
-    if (btnConfirm) btnConfirm.textContent = '✅ Confirmar Salida';
-    marcarAccionActiva('salida');
-    ocultarConfirmacionSalidaEntrada();
-  }
-
-  function cerrarModalSalidas(reiniciar) {
-    const modal = document.getElementById('modalSalidasFull');
-    if (modal) modal.classList.remove('abierto');
-    if (qrReaderSalidaFull) {
-      qrReaderSalidaFull.stop().catch(() => {});
-      qrReaderSalidaFull = null;
-      const btnQR = document.getElementById('btnEscanearSalidaFull');
-      if (btnQR) btnQR.textContent = '📷 QR';
-      const contQR = document.getElementById('qr-reader-salida-full');
-      if (contQR) contQR.style.display = 'none';
-    }
-    if (reiniciar) reiniciarEstadoModalSalidas();
-  }
-
-  // Abrir modal (P1: sin autofocus ni .focus(); P9: conserva modo/motivo mientras esté abierto)
-  document.getElementById('btnAbrirSalidas').addEventListener('click', () => {
-    const modal = document.getElementById('modalSalidasFull');
-    modal.classList.add('abierto');
-    // Solo asigna default si aún no hay modo en memoria (recién cerrado o primera vez)
-    if (!modal.dataset.accion) modal.dataset.accion = 'salida';
-    const accionActual = modal.dataset.accion || 'salida';
-    const seccionMotivo = document.getElementById('seccion-motivo');
-    if (seccionMotivo) seccionMotivo.style.display = (accionActual === 'salida') ? 'block' : 'none';
-    const btnConfirm = document.getElementById('btnConfirmarSalidaEntrada');
-    if (btnConfirm) btnConfirm.textContent = (accionActual === 'entrada') ? '✅ Confirmar Entrada' : '✅ Confirmar Salida';
-    marcarAccionActiva(accionActual);
-    // Sincroniza el resaltado del motivo guardado en memoria
-    const motivoGuardado = modal.dataset.motivo || '';
-    document.querySelectorAll('.boton-motivo').forEach(b => {
-      b.style.borderColor = (b.dataset.motivo === motivoGuardado && motivoGuardado) ? '#3b82f6' : '#e5e7eb';
-    });
-    if (motivoGuardado === 'Otro') {
-      const campoOtro = document.getElementById('campoOtroMotivo');
-      if (campoOtro) campoOtro.style.display = 'block';
-    }
-    // Cargar datos actualizados
-    actualizarEstadoSalidas();
-    // Cerrar QR si estaba abierto
-    if (qrReaderSalidaFull) {
-      qrReaderSalidaFull.stop().catch(() => {});
-      qrReaderSalidaFull = null;
-      document.getElementById('qr-reader-salida-full').style.display = 'none';
-      document.getElementById('btnEscanearSalidaFull').textContent = '📷 QR';
-    }
-    // P1: NO enfocar ningún input al abrir (evita que se abra el teclado en móvil)
-  });
-
-  // Cerrar modal con el botón ✕ (P9: reinicia estado)
-  document.getElementById('btnCerrarSalidasFull').addEventListener('click', () => {
-    cerrarModalSalidas(true);
-  });
-
-  // Cerrar modal haciendo clic fuera (en el fondo oscuro) (P9: reinicia estado)
-  document.getElementById('modalSalidasFull').addEventListener('click', (e) => {
-    if (e.target === e.currentTarget) {
-      cerrarModalSalidas(true);
-    }
-  });
-
-  // Botón Registrar Salida (P9: conserva motivo/texto, solo cambia modo visible)
-  document.getElementById('btnAccionSalida').addEventListener('click', () => {
-    const seccion = document.getElementById('seccion-motivo');
-    if (seccion) seccion.style.display = 'block';
-    document.getElementById('modalSalidasFull').dataset.accion = 'salida';
-    const btnConfirm = document.getElementById('btnConfirmarSalidaEntrada');
-    if (btnConfirm) btnConfirm.textContent = '✅ Confirmar Salida';
-    marcarAccionActiva('salida');
-    // P1: sin .focus() para no abrir el teclado
-  });
-
-  // Botón Registrar Entrada (P9: conserva estado, solo cambia modo)
-  document.getElementById('btnAccionEntrada').addEventListener('click', () => {
-    const sec = document.getElementById('seccion-motivo');
-    if (sec) sec.style.display = 'none';
-    document.getElementById('modalSalidasFull').dataset.accion = 'entrada';
-    const btnConfirm = document.getElementById('btnConfirmarSalidaEntrada');
-    if (btnConfirm) btnConfirm.textContent = '✅ Confirmar Entrada';
-    marcarAccionActiva('entrada');
-    // P1: sin .focus() para no abrir el teclado
-  });
-
-  // Selección de motivo (Baño, Otro). "Otro" guarda dataset.motivo='Otro' para que
-  // la casilla "¿Va a regresar?" sí se tome en cuenta (salida definitiva si se desactiva).
-  document.querySelectorAll('.boton-motivo').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.boton-motivo').forEach(b => b.style.borderColor = '#e5e7eb');
-      const motivo = btn.dataset.motivo;
-      if (motivo === 'Otro') {
-        document.getElementById('campoOtroMotivo').style.display = 'block';
-        // P1: sin .focus() para no abrir el teclado; el usuario toca el campo si quiere escribir
-        btn.style.borderColor = '#3b82f6';
-        document.getElementById('modalSalidasFull').dataset.motivo = 'Otro';
-        return;
-      }
-      document.getElementById('modalSalidasFull').dataset.motivo = motivo;
-      document.getElementById('campoOtroMotivo').style.display = 'none';
-      btn.style.borderColor = '#3b82f6';
-    });
-  });
-
-  // ---- P5: pantalla de confirmación fullscreen (tapa todo el modal, autocierre 2s) ----
-  function ocultarConfirmacionSalidaEntrada() {
-    if (window._timeoutConfirmacion) { clearTimeout(window._timeoutConfirmacion); window._timeoutConfirmacion = null; }
-    if (window._intervalConfirmacion) { clearInterval(window._intervalConfirmacion); window._intervalConfirmacion = null; }
-    const cont = document.getElementById('confirmacionSalidaEntrada');
-    if (cont) { cont.style.display = 'none'; cont.innerHTML = ''; }
-  }
-
-  // Parser tolerante de fechas de salida/entrada (ISO, dd/MM/yyyy HH:mm:ss, yyyy-MM-dd HH:mm:ss)
+  // Parser tolerante de fechas (ISO, dd/MM/yyyy HH:mm:ss, yyyy-MM-dd HH:mm:ss)
   function parsearFechaMovimiento(v) {
     if (v == null || v === '') return null;
     try {
@@ -1393,7 +1084,8 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
         return isNaN(d.getTime()) ? null : d;
       }
       const partes = s.split(' ');
-      const f = partes[0]; const h = partes[1] || '00:00:00';
+      const f = partes[0];
+      const h = partes[1] || '00:00:00';
       const hp = h.split(':');
       const hh = Number(hp[0] || 0), mm = Number(hp[1] || 0), ss = Number(hp[2] || 0);
       if (f.indexOf('/') >= 0) {
@@ -1421,257 +1113,486 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     return h + ':' + m + ':' + s;
   }
 
-  function mostrarConfirmacionSalidaEntrada(datos) {
-    // Si hay una confirmación previa visible, se cierra inmediatamente y se muestra la nueva (P5)
-    ocultarConfirmacionSalidaEntrada();
-    const cont = document.getElementById('confirmacionSalidaEntrada');
-    if (!cont) return;
-    const esSalida = datos.tipo === 'salida';
-    const esDefinitiva = !!datos.definitiva;
-    const colorFondo = esSalida ? '#f59e0b' : '#10b981';
-    const titulo = esSalida ? 'Ya puedes salir' : 'Tu entrada está registrada';
-    const icono = esSalida ? '🚪' : '✅';
-    const nombreSeguro = SIREI.utils.escapeHtml(datos.nombre || '');
-    const motivoSeguro = SIREI.utils.escapeHtml(datos.motivo || '');
-    let bloqueTiempo = '';
-    if (esSalida && !esDefinitiva) {
-      bloqueTiempo = `<p style="margin:8px 0 0 0; font-size:1rem; color:#374151;">Tiempo fuera:</p><p id="cronoConfirmacion" style="margin:0; font-size:2rem; font-weight:800; color:${colorFondo};">00:00</p>`;
-    } else if (esSalida && esDefinitiva) {
-      bloqueTiempo = `<p style="margin:8px 0 0 0; font-size:1rem; font-weight:700; color:#6d28d9;">Salida definitiva · Sin regreso</p>`;
-    } else {
-      bloqueTiempo = `<p style="margin:8px 0 0 0; font-size:1rem; color:#374151;">Tiempo total fuera:</p><p style="margin:0; font-size:2rem; font-weight:800; color:${colorFondo};">⏱️ ${SIREI.utils.escapeHtml(datos.duracion || '—')}</p>`;
+  function msalMMSS(seg) {
+    const t = Math.max(0, Math.floor(seg));
+    return String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0');
+  }
+
+  function msalSegundosDesde(ts) {
+    const d = parsearFechaMovimiento(ts);
+    if (!d) return null;
+    return Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+  }
+
+  // Alumno que bloquea salidas temporales (regla 1): el primero con estado "Fuera"
+  function msalBloqueadoConRegreso() {
+    return msalEstado.fuera.length > 0 ? msalEstado.fuera[0] : null;
+  }
+
+  // ---------- Navegación entre pantallas ----------
+  function msalIrA(nombre) {
+    msalPantalla = String(nombre);
+    const pantalla = msalEl('msal-pantalla-' + nombre);
+    document.querySelectorAll('#modalSalidasFull .msal-pantalla').forEach(function (p) {
+      p.style.display = 'none';
+    });
+    if (!pantalla) return;
+    pantalla.style.display = 'block';
+
+    // El bloque de búsqueda/QR es único y se reubica en la pantalla activa
+    const picker = msalEl('msalPicker');
+    const slot = pantalla.querySelector('.msal-picker-slot');
+    if (picker) {
+      if (slot) {
+        slot.appendChild(picker);
+        picker.style.display = 'block';
+        const inp = msalEl('msalInputAlumno');
+        if (inp) inp.value = '';
+      } else {
+        picker.style.display = 'none';
+      }
     }
+
+    if (nombre === '3a') msalEvaluarBano();
+    if (nombre === '3b') msalEvaluarOtro();
+
+    // Regla 5: sin autofocus (no abrir el teclado en móvil)
+    try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch (e) {}
+  }
+
+  // Pantalla 3A: ¿se puede salir al baño?
+  function msalEvaluarBano() {
+    const bloqueo = msalEl('msal3aBloqueo');
+    const form = msalEl('msal3aForm');
+    if (!bloqueo || !form) return;
+
+    const ocupante = msalEstado.fuera.find(function (s) { return msalNorm(s.motivo) === 'baño'; });
+    const otro = !ocupante ? msalBloqueadoConRegreso() : null;
+    const s = ocupante || otro;
+
+    if (s) {
+      const esBano = !!ocupante;
+      const nombre = SIREI.utils.escapeHtml(msalNombrePorCurp(s.curp));
+      const desde = s.salidaFormateada || s.salidaTimestamp || '';
+      bloqueo.style.display = 'block';
+      form.style.display = 'none';
+      bloqueo.innerHTML = `
+        <div class="msal-bloqueo-icono">${esBano ? '🚻' : '⏳'}</div>
+        <div class="msal-bloqueo-titulo">${esBano ? 'Baño ocupado por:' : 'Hay una persona fuera:'} ${nombre}</div>
+        <div class="msal-bloqueo-crono" data-crono-curp="${SIREI.utils.escapeHtml(s.curp)}" data-desde="${SIREI.utils.escapeHtml(desde)}">⏱️ --:--</div>
+        <div class="msal-bloqueo-sub">${esBano ? 'No puedes salir al baño.' : 'Espera a que regrese para poder salir.'}</div>
+        <button type="button" class="msal-btn-definitiva" data-ir-definitiva="1">📝 Registrar salida definitiva</button>
+      `;
+    } else {
+      bloqueo.style.display = 'none';
+      form.style.display = 'block';
+    }
+    msalTickCronos();
+  }
+
+  // Pantalla 3B: ¿se puede registrar "Otro"?
+  function msalEvaluarOtro() {
+    const bloqueo = msalEl('msal3bBloqueo');
+    const form = msalEl('msal3bForm');
+    const chk = msalEl('chkRegresa');
+    if (!bloqueo || !form) return;
+
+    const vaARegresar = chk ? chk.checked : true;
+    const ocupado = vaARegresar ? msalBloqueadoConRegreso() : null;
+
+    if (ocupado) {
+      const nombre = SIREI.utils.escapeHtml(msalNombrePorCurp(ocupado.curp));
+      const desde = ocupado.salidaFormateada || ocupado.salidaTimestamp || '';
+      bloqueo.style.display = 'block';
+      form.style.display = 'none';
+      bloqueo.innerHTML = `
+        <div class="msal-bloqueo-icono">⏳</div>
+        <div class="msal-bloqueo-titulo">Hay una persona fuera</div>
+        <div class="msal-bloqueo-sub">${nombre} — espere a que regrese</div>
+        <div class="msal-bloqueo-crono" data-crono-curp="${SIREI.utils.escapeHtml(ocupado.curp)}" data-desde="${SIREI.utils.escapeHtml(desde)}">⏱️ --:--</div>
+        <div class="msal-bloqueo-sub" style="margin-top:8px;">También puedes desactivar “¿Va a regresar?” para registrar una salida definitiva.</div>
+      `;
+    } else {
+      bloqueo.style.display = 'none';
+      form.style.display = 'block';
+    }
+    msalTickCronos();
+  }
+
+  // ---------- Cronómetros en vivo (cada segundo) ----------
+  function msalTickCronos() {
+    document.querySelectorAll('#modalSalidasFull [data-crono-curp]').forEach(function (el) {
+      const seg = msalSegundosDesde(el.dataset.desde);
+      if (seg == null) { el.textContent = '⏱️ --:--'; return; }
+      el.textContent = '⏱️ ' + msalMMSS(seg);
+      if (seg >= 300) el.classList.add('msal-crono-alerta');
+
+      const item = el.closest('.msal-fuera-item');
+      const btn = item ? item.querySelector('.msal-btn-escape') : null;
+      if (btn) btn.style.display = (seg >= 300) ? 'inline-flex' : 'none';
+    });
+  }
+
+  function msalIniciarTick() {
+    msalDetenerTick();
+    msalTick = setInterval(function () { try { msalTickCronos(); } catch (e) {} }, 1000);
+  }
+
+  function msalDetenerTick() {
+    if (msalTick) { clearInterval(msalTick); msalTick = null; }
+  }
+
+  // ---------- Estado actual + historial ----------
+  async function actualizarEstadoSalidas() {
+    try {
+      const resp = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          accion: 'obtenerSalidasClase',
+          token: token,
+          idClase: claseActiva.idClase
+        })
+      });
+      const data = await resp.json();
+      if (data.success) {
+        const todas = data.salidas || [];
+        msalEstado.fuera = todas.filter(function (s) { return s.estado === 'Fuera'; });
+        msalEstado.fueraDefinitivo = todas.filter(function (s) { return s.estado === 'Fuera definitivo'; });
+        msalEstado.banoOcupado = msalEstado.fuera.some(function (s) { return msalNorm(s.motivo) === 'baño'; });
+        msalPintarEstadoActual();
+      }
+    } catch (e) {
+      console.error('Error al leer salidas:', e);
+    }
+    try { await msalActualizarHistorial(); } catch (e) {}
+  }
+
+  function msalPintarEstadoActual() {
+    const icono = msalEl('iconoBano');
+    if (icono) {
+      icono.textContent = msalEstado.banoOcupado ? '🚻🚫' : '🚻✅';
+      icono.title = msalEstado.banoOcupado ? 'Baño ocupado' : 'Baño libre';
+    }
+    const linea = msalEl('msalBanoLinea');
+    if (linea) {
+      linea.textContent = msalEstado.banoOcupado ? '🚻🚫 Baño ocupado' : '🚻✅ Baño libre';
+      linea.style.color = msalEstado.banoOcupado ? '#dc2626' : '#16a34a';
+    }
+
+    const cont = msalEl('listaAlumnosFuera');
+    if (!cont) return;
+
+    if (msalEstado.fuera.length === 0 && msalEstado.fueraDefinitivo.length === 0) {
+      cont.innerHTML = '<span style="color:#10b981; font-weight:600;">✅ Todos los alumnos están dentro.</span>';
+      return;
+    }
+
+    let html = '';
+
+    // Con regreso pendiente: nombre + motivo + cronómetro + escape (>= 5 min)
+    msalEstado.fuera.forEach(function (s) {
+      const nombre = SIREI.utils.escapeHtml(msalNombrePorCurp(s.curp));
+      const motivo = SIREI.utils.escapeHtml(s.motivo || 'Sin motivo') +
+        (s.motivo_otro ? ' (' + SIREI.utils.escapeHtml(s.motivo_otro) + ')' : '');
+      const desde = s.salidaFormateada || s.salidaTimestamp || '';
+      const seg = msalSegundosDesde(desde);
+      const alerta = (seg != null && seg >= 300);
+      html += `
+        <div class="msal-fuera-item" data-curp="${SIREI.utils.escapeHtml(s.curp)}">
+          <div>
+            <div class="msal-fuera-nombre">${nombre}</div>
+            <div class="msal-fuera-motivo">${motivo}</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <span class="msal-crono${alerta ? ' msal-crono-alerta' : ''}" data-crono-curp="${SIREI.utils.escapeHtml(s.curp)}" data-desde="${SIREI.utils.escapeHtml(desde)}">⏱️ --:--</span>
+            <button type="button" class="msal-btn-escape" data-curp="${SIREI.utils.escapeHtml(s.curp)}" style="display:${alerta ? 'inline-flex' : 'none'};">🏃 Registrar Escape</button>
+          </div>
+        </div>`;
+    });
+
+    // Sin regreso: nombre + motivo + badge
+    msalEstado.fueraDefinitivo.forEach(function (s) {
+      const nombre = SIREI.utils.escapeHtml(msalNombrePorCurp(s.curp));
+      const motivo = SIREI.utils.escapeHtml(s.motivo || 'Sin motivo') +
+        (s.motivo_otro ? ' (' + SIREI.utils.escapeHtml(s.motivo_otro) + ')' : '');
+      html += `
+        <div class="msal-fuera-item" data-curp="${SIREI.utils.escapeHtml(s.curp)}">
+          <div>
+            <div class="msal-fuera-nombre">${nombre}</div>
+            <div class="msal-fuera-motivo">${motivo}</div>
+          </div>
+          <span class="msal-badge-def">🏃 Sin regreso</span>
+        </div>`;
+    });
+
+    cont.innerHTML = html;
+    msalTickCronos();
+  }
+
+  async function msalActualizarHistorial() {
+    const resp = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        accion: 'obtenerHistorialSalidas',
+        token: token,
+        idClase: claseActiva.idClase,
+        limite: 15
+      })
+    });
+    const dataHist = await resp.json();
+    if (!dataHist.success) return;
+
+    const movs = dataHist.movimientos || [];
+    const contador = msalEl('contadorHistorial');
+    if (contador) contador.textContent = '(' + movs.length + ' registros)';
+    const lista = msalEl('listaHistorial');
+    if (!lista) return;
+
+    if (movs.length === 0) {
+      lista.innerHTML = '<p style="color:#6b7280; font-size:0.9rem;">No hay movimientos registrados.</p>';
+      return;
+    }
+
+    lista.innerHTML = movs.map(function (m) {
+      const nombre = SIREI.utils.escapeHtml(msalNombrePorCurp(m.curp));
+      const estado = m.estado || '';
+      let icono = '🚪✅'; let color = '#065f46'; let extra = '';
+      if (estado === 'Fuera definitivo') { icono = '🚪🚫'; color = '#6d28d9'; extra = 'Sin regreso'; }
+      else if (estado === 'Escape') { icono = '🏃'; color = '#dc2626'; extra = 'Sin regreso'; }
+      else if (estado === 'Fuera') { icono = '🚪'; color = '#92400e'; extra = 'Aún fuera'; }
+      else if (estado === 'Dentro') { icono = '🚪✅'; color = '#065f46'; extra = m.duracion ? ('⏱️ ' + SIREI.utils.escapeHtml(m.duracion)) : '⏱️ --:--'; }
+
+      const fecha = SIREI.utils.escapeHtml(m.salidaFormateada || m.salidaTimestamp || '');
+      const motivoTxt = SIREI.utils.escapeHtml(m.motivo || '') + (m.motivo_otro ? ' (' + SIREI.utils.escapeHtml(m.motivo_otro) + ')' : '');
+      return `<div style="display:flex; justify-content:space-between; gap:8px; padding:6px 0; border-bottom:1px solid #f3f4f6; font-size:0.85rem;">
+        <div style="min-width:0;">
+          <div style="font-weight:600;">${nombre}</div>
+          <div style="color:#6b7280; font-size:0.75rem;">${motivoTxt}</div>
+        </div>
+        <div style="text-align:right; white-space:nowrap;">
+          <div style="color:${color};">${icono} <span style="font-size:0.72rem; color:#6b7280;">${fecha}</span></div>
+          <div style="font-size:0.72rem; font-weight:700; color:#6b7280;">${extra}</div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // ---------- Formulario ----------
+  function msalReiniciarFormulario() {
+    const txt = msalEl('msalMotivoEspecifico');
+    if (txt) txt.value = '';
+    const chk = msalEl('chkRegresa');
+    if (chk) chk.checked = true;
+    const inp = msalEl('msalInputAlumno');
+    if (inp) inp.value = '';
+    const b3 = msalEl('msal3bBloqueo');
+    if (b3) b3.style.display = 'none';
+    const f3 = msalEl('msal3bForm');
+    if (f3) f3.style.display = 'block';
+    const b3a = msalEl('msal3aBloqueo');
+    if (b3a) b3a.style.display = 'none';
+    const f3a = msalEl('msal3aForm');
+    if (f3a) f3a.style.display = 'none';
+  }
+
+  async function msalAbrirModal() {
+    const modal = msalEl('modalSalidasFull');
+    if (!modal) return;
+    modal.classList.add('abierto');
+    msalIrA('1');
+    msalIniciarTick();
+    await actualizarEstadoSalidas();
+  }
+
+  function msalCerrarModal() {
+    const modal = msalEl('modalSalidasFull');
+    if (modal) modal.classList.remove('abierto');
+    msalDetenerTick();
+    msalOcultarConfirmacion();
+    msalReiniciarFormulario();
+    msalIrA('1');
+  }
+
+  // ---------- Confirmación (3 s y vuelve a la Pantalla 1) ----------
+  function msalOcultarConfirmacion() {
+    if (window._msalTimeoutConf) { clearTimeout(window._msalTimeoutConf); window._msalTimeoutConf = null; }
+    if (window._msalIntervalConf) { clearInterval(window._msalIntervalConf); window._msalIntervalConf = null; }
+    const cont = msalEl('confirmacionSalidaEntrada');
+    if (cont) { cont.style.display = 'none'; cont.innerHTML = ''; }
+  }
+
+  function msalMostrarConfirmacion(datos) {
+    // Si ya había una confirmación, se cierra de inmediato y se muestra la nueva
+    msalOcultarConfirmacion();
+    const cont = msalEl('confirmacionSalidaEntrada');
+    if (!cont) return;
+
+    const esEntrada = datos.tipo === 'entrada';
+    const esDefinitiva = !!datos.definitiva;
+    const nombre = SIREI.utils.escapeHtml(datos.nombre || '');
+    const motivo = SIREI.utils.escapeHtml(datos.motivo || '');
+
+    let icono, titulo, bloque;
+    if (esEntrada) {
+      icono = '✅';
+      titulo = 'Tu entrada está registrada';
+      bloque = `<p style="margin:8px 0 0 0; font-size:1rem; color:#374151;">Tiempo total fuera:</p>
+                <p style="margin:4px 0 0 0; font-size:2.1rem; font-weight:800; color:#10b981; font-variant-numeric:tabular-nums;">⏱️ ${SIREI.utils.escapeHtml(datos.duracion || '00:00:00')}</p>`;
+    } else if (esDefinitiva) {
+      icono = '🚪';
+      titulo = 'Salida registrada';
+      bloque = `${motivo ? `<p style="margin:6px 0 0 0; font-size:1.05rem; color:#374151;">Motivo: <strong>${motivo}</strong></p>` : ''}
+                <div style="margin-top:12px;"><span style="display:inline-block; font-size:0.9rem; font-weight:800; color:#6d28d9; background:#ede9fe; padding:6px 16px; border-radius:999px;">🏃 Sin regreso</span></div>`;
+    } else {
+      icono = '🚪';
+      titulo = 'Ya puedes salir';
+      bloque = `${motivo ? `<p style="margin:6px 0 0 0; font-size:1.05rem; color:#374151;">Motivo: <strong>${motivo}</strong></p>` : ''}
+                <p style="margin:8px 0 0 0; font-size:1rem; color:#374151;">Tiempo fuera:</p>
+                <p id="msalConfCrono" style="margin:4px 0 0 0; font-size:2.1rem; font-weight:800; color:#f59e0b; font-variant-numeric:tabular-nums;">00:00</p>`;
+    }
+
+    cont.style.zIndex = '2147483600';
     cont.innerHTML = `
-      <div class="confirmacion-overlay" style="background:rgba(0,0,0,0.75);">
+      <div class="confirmacion-overlay">
         <div class="confirmacion-tarjeta">
-          <div style="font-size:3rem;">${icono}</div>
-          <h2 style="margin:8px 0; font-size:1.6rem; color:#111827;">${titulo}</h2>
-          <p style="margin:4px 0; font-size:1.25rem; font-weight:700; color:#1E3A8A;">${nombreSeguro}</p>
-          ${esSalida && motivoSeguro ? `<p style="margin:4px 0; font-size:1.05rem; color:#374151;">Motivo: <strong>${motivoSeguro}</strong></p>` : ''}
-          ${bloqueTiempo}
+          <div style="font-size:3.2rem; line-height:1;">${icono}</div>
+          <h2 style="margin:10px 0 6px 0; font-size:1.5rem; color:#111827;">${titulo}</h2>
+          <p style="margin:4px 0; font-size:1.25rem; font-weight:800; color:#1E3A8A;">${nombre}</p>
+          ${bloque}
         </div>
       </div>`;
     cont.style.display = 'block';
-    // Cronómetro en vivo solo en salidas CON regreso
-    if (esSalida && !esDefinitiva && datos.salidaTimestamp) {
-      const salidaTs = datos.salidaTimestamp;
-      const pintar = () => {
-        const el = document.getElementById('cronoConfirmacion');
+
+    // Cronómetro en vivo solo para salidas temporales
+    if (!esEntrada && !esDefinitiva && datos.salidaTimestamp) {
+      const pintar = function () {
+        const el = msalEl('msalConfCrono');
         if (!el) return;
-        const fechaSalida = parsearFechaMovimiento(salidaTs);
-        if (!fechaSalida) { el.textContent = '00:00'; return; }
-        const seg = Math.max(0, Math.floor((new Date() - fechaSalida) / 1000));
-        el.textContent = String(Math.floor(seg / 60)).padStart(2, '0') + ':' + String(seg % 60).padStart(2, '0');
+        const seg = msalSegundosDesde(datos.salidaTimestamp);
+        el.textContent = (seg == null) ? '00:00' : msalMMSS(seg);
       };
       pintar();
-      window._intervalConfirmacion = setInterval(pintar, 1000);
+      window._msalIntervalConf = setInterval(pintar, 1000);
     }
-    window._timeoutConfirmacion = setTimeout(ocultarConfirmacionSalidaEntrada, 2000);
+
+    window._msalTimeoutConf = setTimeout(function () {
+      msalOcultarConfirmacion();
+      msalIrA('1');       // vuelve al menú para el siguiente alumno
+    }, 3000);
   }
 
-  function obtenerMotivoSalidaActual() {
-    const modal = document.getElementById('modalSalidasFull');
-    const motivoSel = modal ? (modal.dataset.motivo || '') : '';
-    if (motivoSel === 'Baño') return { motivo: 'Baño', motivoOtro: '', valido: true };
-    // "Otro" (o texto escrito en su campo) exige especificar el motivo; la casilla
-    // "¿Va a regresar?" decide si es salida con regreso o definitiva.
-    const txt = document.getElementById('textoOtroMotivo');
-    const otroTexto = txt ? txt.value.trim() : '';
-    if (motivoSel === 'Otro' || otroTexto) {
-      if (!otroTexto) return { valido: false };
-      return { motivo: 'Otro', motivoOtro: otroTexto, valido: true };
-    }
-    return { valido: false };
-  }
-
-  // Procesa salida/entrada por CURP (usado por Confirm manual y por QR). P3+P5.
-  async function procesarSalidaEntradaPorCurp(curpRaw) {
-    const accion = document.getElementById('modalSalidasFull').dataset.accion || 'salida';
+  // ---------- Registro ----------
+  async function msalProcesar(curpRaw) {
     const curp = String(curpRaw || '').trim().toUpperCase();
-    const alumno = alumnosGrupo.find(a => a.curp === curp);
+    const alumno = alumnosGrupo.find(function (a) { return a.curp === curp; });
     if (!alumno) {
       SIREI.utils.mostrarToast('Alumno no encontrado en este grupo.', 'error');
       if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
       return;
     }
-    let motivo = '', motivoOtro = '', vaARegresar = true;
-    if (accion === 'salida') {
-      const res = obtenerMotivoSalidaActual();
-      if (!res.valido) {
-        SIREI.utils.mostrarToast('Selecciona un motivo primero', 'error');
+
+    const esEntrada = (msalPantalla === 'entrada');
+    let motivo = '';
+    let motivoOtro = '';
+    let vaARegresar = true;
+
+    if (!esEntrada) {
+      if (msalPantalla === '3a') {
+        motivo = 'Baño';
+      } else {
+        const txt = msalEl('msalMotivoEspecifico');
+        motivoOtro = txt ? txt.value.trim() : '';
+        if (!motivoOtro) {
+          SIREI.utils.mostrarToast('Escribe el motivo específico.', 'error');
+          if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
+          return;
+        }
+        motivo = 'Otro';
+        const chk = msalEl('chkRegresa');
+        vaARegresar = chk ? chk.checked : true;
+      }
+    }
+
+    // --- Entrada: el alumno debe tener una salida activa ---
+    if (esEntrada) {
+      const enFuera = msalEstado.fuera.some(function (s) { return s.curp === curp; });
+      const enDefinitivo = msalEstado.fueraDefinitivo.some(function (s) { return s.curp === curp; });
+      if (!enFuera && !enDefinitivo) {
+        SIREI.utils.mostrarToast('Alumno no tiene salida activa', 'error');
         if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
         return;
       }
-      motivo = res.motivo; motivoOtro = res.motivoOtro || '';
-      if (motivo === 'Otro') {
-        const chkRegresa = document.getElementById('chkRegresa');
-        vaARegresar = chkRegresa ? chkRegresa.checked : true;
-      } else if (motivo === 'Baño') {
-        vaARegresar = true;
+    }
+
+    // --- Regla 1: bloqueo general para salidas temporales ---
+    if (!esEntrada && vaARegresar) {
+      const ocupante = msalBloqueadoConRegreso();
+      if (ocupante) {
+        SIREI.utils.mostrarToast('Hay una persona fuera (' + msalNombrePorCurp(ocupante.curp) + '). Espera a que regrese.', 'error');
+        if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
+        return;
       }
     }
-    const btnConfirm = document.getElementById('btnConfirmarSalidaEntrada');
-    const textoOriginal = btnConfirm ? btnConfirm.textContent : '';
-    if (btnConfirm) { btnConfirm.disabled = true; btnConfirm.textContent = '⏳ Procesando...'; }
-    // Para entradas: obtener la hora de salida activa ANTES de registrar, para calcular
-    // la duración localmente (salida -> entrada) aunque el backend no la devuelva.
-    let salidaActivaTs = null;
-    if (accion === 'entrada') {
-      try {
-        const rSal = await fetch(API_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ accion: 'obtenerSalidasClase', token: token, idClase: claseActiva.idClase })
-        });
-        const dSal = await rSal.json();
-        if (dSal.success) {
-          const rec = (dSal.salidas || []).find(s => s.curp === alumno.curp && s.estado === 'Fuera');
-          if (rec) salidaActivaTs = rec.salidaFormateada || rec.salidaTimestamp || null;
-        }
-      } catch (e) { console.error('No se pudo leer salida activa:', e); }
-    }
+
+    const btn = msalEl('msalBtnRegistrar');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Registrando…'; }
+
     try {
-      let response;
-      if (accion === 'salida') {
-        response = await fetch(API_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            accion: 'registrarSalida',
-            token: token,
-            idClase: claseActiva.idClase,
-            curpAlumno: alumno.curp,
-            motivo: motivo,
-            motivoOtro: motivoOtro,
-            vaARegresar: vaARegresar ? 'true' : 'false'
-          })
-        });
-      } else {
-        response = await fetch(API_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            accion: 'registrarEntrada',
-            token: token,
-            idClase: claseActiva.idClase,
-            curpAlumno: alumno.curp
-          })
-        });
-      }
+      const params = esEntrada
+        ? { accion: 'registrarEntrada', token: token, idClase: claseActiva.idClase, curpAlumno: curp }
+        : { accion: 'registrarSalida', token: token, idClase: claseActiva.idClase, curpAlumno: curp, motivo: motivo, motivoOtro: motivoOtro, vaARegresar: vaARegresar ? 'true' : 'false' };
+
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(params)
+      });
       const result = await response.json();
-      if (result.success) {
-        const mensaje = accion === 'salida' ? 'Salida registrada' : 'Entrada registrada';
-        SIREI.utils.mostrarToast(`✅ ${mensaje} para ${alumno.nombreCompleto}`);
-        if (navigator.vibrate) navigator.vibrate(50);
-        // Duración: backend -> historial -> cálculo local (salida -> entrada)
-        let duracionFinal = result.duracion || '';
-        if (accion === 'entrada' && !duracionFinal) {
-          try {
-            const rHist = await fetch(API_URL, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: new URLSearchParams({ accion: 'obtenerHistorialSalidas', token: token, idClase: claseActiva.idClase, limite: 30 })
-            });
-            const dHist = await rHist.json();
-            if (dHist.success) {
-              const movs = dHist.movimientos || [];
-              const rec = movs.find(m => m.curp === alumno.curp && m.estado === 'Dentro' && m.duracion) || movs.find(m => m.curp === alumno.curp && m.duracion);
-              if (rec && rec.duracion) duracionFinal = rec.duracion;
-            }
-          } catch (e) { console.error('No se pudo releer duración:', e); }
-        }
-        if (accion === 'entrada' && !duracionFinal && salidaActivaTs) {
-          const fSal = parsearFechaMovimiento(salidaActivaTs);
-          if (fSal) {
-            const seg = Math.max(0, Math.floor((new Date() - fSal) / 1000));
-            duracionFinal = formatearDuracionHMS(seg);
-          }
-        }
-        const motivoMostrar = (motivo === 'Otro' && motivoOtro) ? ('Otro: ' + motivoOtro) : motivo;
-        const esDefinitiva = (accion === 'salida') && (!vaARegresar || result.estado === 'Fuera definitivo');
-        mostrarConfirmacionSalidaEntrada({
-          tipo: accion,
-          nombre: alumno.nombreCompleto,
-          motivo: motivoMostrar,
-          duracion: duracionFinal,
-          salidaTimestamp: result.salidaTimestamp || salidaActivaTs || new Date().toISOString(),
-          definitiva: esDefinitiva
-        });
-        // P9: reinicia estado solo tras éxito (pero mantiene modal abierto)
-        const input = document.getElementById('inputSalidaFull');
-        if (input) input.value = '';
-        const modal = document.getElementById('modalSalidasFull');
-        if (modal) modal.dataset.motivo = '';
-        const txtOtro = document.getElementById('textoOtroMotivo');
-        const chkMant = document.getElementById('chkMantenerMotivo');
-        if (!chkMant || !chkMant.checked) { if (txtOtro) txtOtro.value = ''; }
-        const campoOtro = document.getElementById('campoOtroMotivo');
-        if (campoOtro) campoOtro.style.display = 'none';
-        document.querySelectorAll('.boton-motivo').forEach(b => { b.style.borderColor = '#e5e7eb'; });
-        const chkRegresa = document.getElementById('chkRegresa');
-        if (chkRegresa) chkRegresa.checked = true;
-        await actualizarEstadoSalidas();
-        if (qrReaderSalidaFull) {
-          qrReaderSalidaFull.stop().catch(() => {});
-          qrReaderSalidaFull = null;
-          document.getElementById('qr-reader-salida-full').style.display = 'none';
-          document.getElementById('btnEscanearSalidaFull').textContent = '📷 QR';
-        }
-      } else {
+
+      if (!result.success) {
         SIREI.utils.mostrarToast('❌ ' + (result.message || 'Error al registrar'), 'error');
         if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
+        return;
       }
+
+      // Duración de la entrada (backend o cálculo local de respaldo)
+      let duracionFinal = result.duracion || '';
+      if (esEntrada && !duracionFinal) {
+        const rec = msalEstado.fuera.find(function (s) { return s.curp === curp; }) ||
+                    msalEstado.fueraDefinitivo.find(function (s) { return s.curp === curp; });
+        const desde = rec ? (rec.salidaFormateada || rec.salidaTimestamp) : null;
+        const seg = msalSegundosDesde(desde);
+        if (seg != null) duracionFinal = formatearDuracionHMS(seg);
+      }
+
+      const esDefinitiva = !esEntrada && (!vaARegresar || result.estado === 'Fuera definitivo');
+      const motivoMostrar = (motivo === 'Otro' && motivoOtro) ? ('Otro: ' + motivoOtro) : (motivo || '');
+
+      if (navigator.vibrate) navigator.vibrate(60);
+      msalReiniciarFormulario();           // regla 7: reinicia tras éxito
+      await actualizarEstadoSalidas();      // refresca (ocupa/libera el bloqueo)
+
+      msalMostrarConfirmacion({
+        tipo: esEntrada ? 'entrada' : 'salida',
+        nombre: alumno.nombreCompleto,
+        motivo: motivoMostrar,
+        duracion: duracionFinal || '00:00:00',
+        salidaTimestamp: result.salidaTimestamp || (esEntrada ? null : new Date().toISOString()),
+        definitiva: esDefinitiva
+      });
     } catch (e) {
       SIREI.utils.mostrarToast('Error de conexión: ' + e.message, 'error');
     } finally {
-      if (btnConfirm) { btnConfirm.disabled = false; btnConfirm.textContent = textoOriginal; }
+      if (btn) { btn.disabled = false; btn.textContent = '✅ Registrar'; }
     }
   }
 
-  // Botón Confirmar (unificado para salida y entrada, vía input manual)
-  document.getElementById('btnConfirmarSalidaEntrada').addEventListener('click', async () => {
-    const input = document.getElementById('inputSalidaFull');
-    const valor = input ? input.value.trim() : '';
-    if (!valor) {
-      SIREI.utils.mostrarToast('Ingresa el nombre o CURP del alumno.', 'error');
-      return;
-    }
-    const alumno = buscarAlumnoPorTexto(valor);
-    if (!alumno) {
-      SIREI.utils.mostrarToast('Alumno no encontrado en este grupo.', 'error');
-      return;
-    }
-    await procesarSalidaEntradaPorCurp(alumno.curp);
-  });
-
-  // QR para salidas/entradas: overlay encima (sin hacer scroll) y modo continuo.
-  // onLeido devuelve la promesa, así el lector espera a que termine el registro
-  // antes de reactivar la cámara (evita duplicados).
-  document.getElementById('btnEscanearSalidaFull').addEventListener('click', () => {
-    SIREI.qr.abrir({
-      titulo: 'Entradas / Salidas',
-      subtitulo: 'Escanea el QR del alumno',
-      continuo: true,
-      onLeido: (codigo) => {
-        const curp = String(codigo || '').trim().toUpperCase();
-        return procesarSalidaEntradaPorCurp(curp);
-      }
-    });
-  });
-
-  // Botón Escape
-  document.getElementById('btnEscapeSalida').addEventListener('click', async () => {
-    const btn = document.getElementById('btnEscapeSalida');
-    const curp = btn.dataset.curp;
-    if (!curp) {
-      SIREI.utils.mostrarToast('No hay alumno fuera para registrar escape.', 'error');
-      return;
-    }
-    if (!SIREI.utils.confirmar(`¿Registrar a ${curp} como escape? Esto lo marcará como fuera y lo llevará al panel Actitudinal para asignar una actitud negativa.`)) return;
-
-    btn.disabled = true;
-    btn.textContent = '⏳ Procesando...';
-
+  // ---------- Escape desde la lista de alumnos fuera ----------
+  async function msalRegistrarEscape(curp) {
+    if (!curp) return;
+    if (!SIREI.utils.confirmar('¿Registrar escape? Se liberará el bloqueo de salidas.')) return;
     try {
       const response = await fetch(API_URL, {
         method: 'POST',
@@ -1685,25 +1606,107 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
       });
       const result = await response.json();
       if (result.success) {
-        SIREI.utils.mostrarToast('✅ Escape registrado. Redirigiendo a Actitudinal...');
+        SIREI.utils.mostrarToast('✅ Escape registrado. Asígnale una actitud en el panel Actitudinal.');
         await actualizarEstadoSalidas();
-        const btnActitudinal = document.querySelector('.btn-panel[data-panel="actitudinal"]');
-        if (btnActitudinal) {
-          btnActitudinal.click();
-        } else {
-          SIREI.utils.mostrarToast('No se encontró la pestaña Actitudinal.', 'error');
-        }
+        if (msalPantalla === '3a') msalEvaluarBano();
+        if (msalPantalla === '3b') msalEvaluarOtro();
       } else {
         SIREI.utils.mostrarToast('❌ ' + (result.message || 'Error al registrar escape'), 'error');
       }
     } catch (e) {
       SIREI.utils.mostrarToast('Error de conexión: ' + e.message, 'error');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '🏃 Registrar como Escape (ir a Actitudinal)';
-      btn.style.display = 'none';
     }
+  }
+
+  // ---------- Eventos ----------
+  document.getElementById('btnAbrirSalidas').addEventListener('click', msalAbrirModal);
+  document.getElementById('btnCerrarSalidasFull').addEventListener('click', msalCerrarModal);
+
+  // Botones "← Atrás"
+  document.querySelectorAll('#modalSalidasFull .msal-atras').forEach(function (b) {
+    b.addEventListener('click', function () { msalIrA(b.dataset.back || '1'); });
   });
+
+  // Pantalla 1 → 2 / Entrada
+  document.getElementById('btnAccionSalida').addEventListener('click', function () { msalIrA('2'); });
+  document.getElementById('btnAccionEntrada').addEventListener('click', function () { msalIrA('entrada'); });
+
+  // Pantalla 2 → 3A / 3B
+  document.getElementById('btnMotivoBano').addEventListener('click', function () { msalIrA('3a'); });
+  document.getElementById('btnMotivoOtro').addEventListener('click', function () {
+    const chk = msalEl('chkRegresa');
+    if (chk) chk.checked = true;
+    msalIrA('3b');
+  });
+
+  // La casilla cambia los bloqueos de la Pantalla 3B
+  const msalChkRegresa = msalEl('chkRegresa');
+  if (msalChkRegresa) {
+    msalChkRegresa.addEventListener('change', msalEvaluarOtro);
+  }
+
+  // "Registrar salida definitiva" del bloqueo del baño → 3B con "¿Va a regresar?" desactivada
+  const msalBloqueoBano = msalEl('msal3aBloqueo');
+  if (msalBloqueoBano) {
+    msalBloqueoBano.addEventListener('click', function (e) {
+      if (!e.target.closest('[data-ir-definitiva]')) return;
+      const chk = msalEl('chkRegresa');
+      if (chk) chk.checked = false;
+      msalIrA('3b');
+    });
+  }
+
+  // Botón de escape en la lista (delegado: la lista se repinta)
+  const msalListaFuera = msalEl('listaAlumnosFuera');
+  if (msalListaFuera) {
+    msalListaFuera.addEventListener('click', function (e) {
+      const btn = e.target.closest('.msal-btn-escape');
+      if (!btn) return;
+      msalRegistrarEscape(btn.dataset.curp);
+    });
+  }
+
+  // Botón Registrar (por nombre o CURP)
+  const msalBtnRegistrar = msalEl('msalBtnRegistrar');
+  if (msalBtnRegistrar) {
+    msalBtnRegistrar.addEventListener('click', async function () {
+      const inp = msalEl('msalInputAlumno');
+      const valor = inp ? inp.value.trim() : '';
+      if (!valor) {
+        SIREI.utils.mostrarToast('Escribe el nombre o CURP del alumno.', 'error');
+        return;
+      }
+      const alumno = buscarAlumnoPorTexto(valor);
+      if (!alumno) {
+        SIREI.utils.mostrarToast('Alumno no encontrado en este grupo.', 'error');
+        return;
+      }
+      await msalProcesar(alumno.curp);
+    });
+  }
+
+  // Botón QR: procesa de inmediato y cierra la cámara tras la lectura (regla 4)
+  const msalBtnQR = msalEl('msalBtnQR');
+  if (msalBtnQR) {
+    msalBtnQR.addEventListener('click', function () {
+      SIREI.qr.abrir({
+        titulo: 'Entradas / Salidas',
+        subtitulo: 'Escanea el QR del alumno',
+        continuo: false,
+        onLeido: function (codigo) {
+          return msalProcesar(String(codigo || '').trim().toUpperCase());
+        }
+      });
+    });
+  }
+
+  // Cerrar tocando el fondo oscuro (fuera de la hoja blanca)
+  document.getElementById('modalSalidasFull').addEventListener('click', function (e) {
+    if (e.target === e.currentTarget) msalCerrarModal();
+  });
+
+  // El modal arranca siempre en la Pantalla 1
+  msalIrA('1');
 
   // ---- 9. FINALIZAR CLASE (optimizado: el backend marca ausentes en lote) ----
   document.getElementById('btnFinalizarClase').addEventListener('click', async () => {
