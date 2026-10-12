@@ -13,7 +13,7 @@
 //  de CACHE (v1 -> v2). Así el navegador reemplaza la copia guardada.
 // ============================================================
 
-const CACHE = 'sirei-shell-v2';
+const CACHE = 'sirei-shell-v3';
 
 const SHELL = [
   './',
