@@ -42,6 +42,9 @@
         <a href="#" class="nav-item" data-tab="resultados">
           <i class="bi bi-bar-chart-line" style="color: #FBBF24;"></i> Resultados
         </a>
+        <a href="#" class="nav-item" data-tab="evidencias">
+          <i class="bi bi-journal-text" style="color: #34D399;"></i> Evidencias
+        </a>
       </nav>
       <div class="sidebar-footer">
         <button id="logoutBtn" class="btn-logout"><i class="bi bi-box-arrow-right"></i> Cerrar sesión</button>
@@ -82,8 +85,13 @@
   <!-- Cargar lógica del docente (ubicado en js/pages/docente.js) -->
   <script src="js/pages/docente.js"></script>
 
-<!-- Librería para escanear QR desde la cámara -->
+<!-- Librería para escanear QR desde la cámara (con respaldo de CDN) -->
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+  if (typeof Html5Qrcode === 'undefined') {
+    document.write('<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"><\/script>');
+  }
+</script>
 
 
 </body>
