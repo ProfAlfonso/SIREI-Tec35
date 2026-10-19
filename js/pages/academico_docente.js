@@ -1,14 +1,22 @@
 // ============================================================
 //  academico_docente.js - Módulo Académico (Docente)
 //  Gestión de evidencias y entregas
+//  Versión 2.2:
+//    - Evidencias separadas por asignatura (ya no se mezclan las de otras materias).
+//    - Una sola consulta de entregas para toda la lista (más rápido).
+//    - La cámara QR se cierra sola al leer y muestra el nombre del alumno.
+//    - Autoregistro del alumno: bienvenida, ponderación, identificación,
+//      resumen y confirmación final del docente.
+//    - Sección "Evidencias" disponible sin necesidad de iniciar clase.
 //  Versión 2.1 - CORREGIDA:
 //    - El campo de texto para observaciones ahora ocupa todo el ancho en móviles.
-//    - El botón de dictado por voz se ha rediseñado para que no estorbe
-//      (se muestra como un botón pequeño al lado del textarea, con icono de micrófono).
-//    - El textarea tiene un tamaño mínimo adecuado para ser visible en pantallas pequeñas.
+//    - El botón de dictado por voz se ha rediseñado para que no estorbe.
+//    - El textarea tiene un tamaño mínimo adecuado para pantallas pequeñas.
 // ============================================================
 
 window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, idAsignatura, periodo, token, idSubgrupo) {
+  const esc = SIREI.utils.escapeHtml;
+
   // === Estado ===
   let evidencias = [];
   let evidenciaSeleccionada = null;
@@ -44,21 +52,28 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
       })
     });
     const data = await response.json();
-    if (data.success) return data.evidencias || [];
-    return [];
+    if (!data.success) return [];
+    const lista = data.evidencias || [];
+    // Solo las evidencias de la asignatura en la que se está trabajando.
+    // Las evidencias antiguas sin asignatura se conservan para no ocultarlas.
+    if (!idAsignatura) return lista;
+    return lista.filter(function (ev) {
+      return !ev.idAsignatura || String(ev.idAsignatura) === String(idAsignatura);
+    });
   }
 
-  // === Obtener entregas de una evidencia ===
+  // === Obtener entregas (de una evidencia o de toda la clase) ===
   async function obtenerEntregas(idEvidencia) {
+    const params = {
+      accion: 'obtenerEntregas',
+      token: token,
+      idClase: idGrupo
+    };
+    if (idEvidencia) params.idEvidencia = idEvidencia;
     const response = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        accion: 'obtenerEntregas',
-        token: token,
-        idClase: idGrupo,
-        idEvidencia: idEvidencia
-      })
+      body: new URLSearchParams(params)
     });
     const data = await response.json();
     if (data.success) return data.entregas || [];
@@ -94,20 +109,26 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
   async function renderizar() {
     // Cargar datos
     try {
-      alumnosGrupo = await obtenerAlumnosGrupo();
-      evidencias = await obtenerEvidencias();
-      
+      const resultados = await Promise.all([
+        obtenerAlumnosGrupo(),
+        obtenerEvidencias(),
+        obtenerEntregas()          // una sola consulta para todas las evidencias
+      ]);
+      alumnosGrupo = resultados[0] || [];
+      evidencias = resultados[1] || [];
+
       // Mapear entregas existentes por evidencia y alumno
-      for (const ev of evidencias) {
-        const entregas = await obtenerEntregas(ev.id);
-        entregasExistentes[ev.id] = {};
-        entregas.forEach(e => {
-          entregasExistentes[ev.id][e.curpAlumno] = e;
-        });
-      }
+      entregasExistentes = {};
+      (resultados[2] || []).forEach(function (e) {
+        if (!entregasExistentes[e.idEvidencia]) entregasExistentes[e.idEvidencia] = {};
+        entregasExistentes[e.idEvidencia][e.curpAlumno] = e;
+      });
     } catch (e) {
       console.error('Error al cargar datos:', e);
     }
+
+    // Si la pestaña se cerró mientras cargaba, no se pinta (evita ids duplicados)
+    if (container.isConnected === false) return;
 
     container.innerHTML = `
       <div class="academico-docente">
@@ -119,6 +140,9 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
         </div>
 
         <div id="listaEvidencias" style="margin-bottom:20px;">
+          <p style="color:#4b5563; font-size:0.88rem; margin:0 0 12px 0;">
+            👆 Toca una evidencia para que el alumno registre su entrega. Usa <strong>Ver entregas</strong> para calificar o revisar al grupo.
+          </p>
           ${evidencias.length === 0 ? '<p style="color:#6b7280;">No hay evidencias creadas para esta clase.</p>' : ''}
           ${evidencias.map(ev => {
             const fechaMax = ev.fechaMaximaEntrega;
@@ -132,22 +156,30 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
               }
               fechaMaxFormateada = formatearFechaSi(fechaMax);
             }
+            const entregasEv = entregasExistentes[ev.id] ? Object.keys(entregasExistentes[ev.id]).length : 0;
+            const pendientesEv = Math.max(0, alumnosGrupo.length - entregasEv);
             return `
               <div class="evidencia-item" data-id="${ev.id}" style="background:white; border-radius:10px; padding:12px 16px; margin-bottom:10px; border:1px solid #e5e7eb; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
-                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
-                  <div>
-                    <strong style="font-size:1.05rem;">${SIREI.utils.escapeHtml(ev.nombreEvidencia)}</strong>
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px;">
+                  <div style="min-width:0; flex:1 1 220px;">
+                    <strong style="font-size:1.05rem;">${esc(ev.nombreEvidencia)}</strong>
                     <div style="font-size:0.8rem; color:#6b7280; margin-top:2px;">
                       ${ev.calificacionNumerica ? 'Calificaci\u00f3n num\u00e9rica' : ''}
                       ${ev.escalaSuficiencia ? 'Escala de suficiencia' : ''}
-                      ${ev.instrumentoEvaluacion ? ` <a href="${ev.instrumentoEvaluacion}" target="_blank" style="color:#3b82f6;">Instrumento</a>` : ''}
+                      ${ev.instrumentoEvaluacion ? ` <a href="${esc(ev.instrumentoEvaluacion)}" target="_blank" style="color:#3b82f6;">Instrumento</a>` : ''}
                       ${fechaMax ? ` <span style="color:${fechaColor};">${fechaMaxFormateada}</span>` : ''}
-                      ${ev.periodo ? ` <span style="color:#6b7280;">[${SIREI.utils.escapeHtml(ev.periodo)}]</span>` : ''}
+                      ${ev.periodo ? ` <span style="color:#6b7280;">[${esc(ev.periodo)}]</span>` : ''}
+                    </div>
+                    <div style="margin-top:7px; display:flex; gap:6px; flex-wrap:wrap;">
+                      <span style="font-size:0.75rem; font-weight:700; color:#166534; background:#dcfce7; border-radius:999px; padding:3px 10px;">✅ ${entregasEv} entregadas</span>
+                      <span style="font-size:0.75rem; font-weight:700; color:#92400e; background:#fef3c7; border-radius:999px; padding:3px 10px;">⏳ ${pendientesEv} pendientes</span>
                     </div>
                   </div>
-                  <div style="display:flex; gap:8px; align-items:center;">
-                    <span style="font-size:0.8rem; color:#6b7280;">${formatearFechaSi(ev.timestampCreacion)}</span>
+                  <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+                    <button class="btn-registrar-evidencia btn btn-primary" data-id="${ev.id}" style="padding:8px 12px; font-size:0.8rem;">📝 Registrar entrega</button>
+                    <button class="btn-ver-entregas btn btn-secondary" data-id="${ev.id}" style="padding:8px 12px; font-size:0.8rem;">📋 Ver entregas</button>
                     <button class="btn-eliminar-evidencia btn btn-danger" data-id="${ev.id}" style="padding:4px 10px; font-size:0.75rem;">Eliminar</button>
+                    <span style="font-size:0.75rem; color:#6b7280;">${formatearFechaSi(ev.timestampCreacion)}</span>
                   </div>
                 </div>
               </div>
@@ -173,8 +205,14 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
       item.addEventListener('click', function(e) {
         if (e.target.classList.contains('btn-eliminar-evidencia')) return;
         const id = parseInt(this.dataset.id);
-        const ev = evidencias.find(e => e.id === id);
-        if (ev) mostrarDetalleEvidencia(ev);
+        const ev = evidencias.find(e => e.id === id) || evidencias.find(e => String(e.id) === String(this.dataset.id));
+        if (!ev) return;
+        // El botón "Ver entregas" abre el panel del docente; el resto abre el registro del alumno.
+        if (e.target.closest('.btn-ver-entregas')) {
+          mostrarDetalleEvidencia(ev);
+          return;
+        }
+        abrirWizardEvidencia(ev);
       });
     });
 
@@ -222,6 +260,15 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
   let ultimosRegistros = [];
   let entregasPorAlumno = {};    // curp -> entrega (caché local; evita reconsultar tras cada guardado)
   let guardandoEntrega = false;  // candado anti doble registro
+
+  // === Autoregistro del alumno (asistente a pantalla completa) ===
+  let wizardEv = null;
+  let wizardPaso = 1;
+  let wizardCalificacion = '';
+  let wizardEscala = '';
+  let wizardAlumno = null;
+  let wizardAlumnosFiltro = '';
+  let wizardTimeoutExito = null;
 
   async function mostrarDetalleEvidencia(ev, saltarRefresco) {
     evidenciaSeleccionada = ev;
@@ -506,29 +553,35 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
       });
     });
 
-    // ---- Lector QR (overlay arriba, alta sensibilidad, modo continuo) ----
+    // ---- Lector QR: se cierra solo al leer (no se queda escaneando) ----
     const btnEscanear = document.getElementById('btnEscanearEvidencia');
     if (btnEscanear) {
       btnEscanear.addEventListener('click', function () {
         SIREI.qr.abrir({
           titulo: 'Registrar entrega',
           subtitulo: ev.nombreEvidencia,
-          continuo: respuestaRapida,
+          continuo: false,
+          etiqueta: function (codigo) {
+            const curp = String(codigo || '').trim().toUpperCase();
+            const al = alumnosGrupo.find(function (a) { return String(a.curp).toUpperCase() === curp; });
+            return al ? al.nombreCompleto : null;
+          },
           onLeido: function (codigo) {
             const curp = String(codigo).trim().toUpperCase();
             const alumno = alumnosGrupo.find(function (a) { return a.curp === curp; });
             if (!alumno) {
               SIREI.utils.mostrarToast('Alumno no encontrado en este grupo.', 'error');
-              return;
+              return 'No pertenece al grupo';
             }
             const busq = elBusqueda();
             if (busq) busq.value = alumno.nombreCompleto;
             seleccionarAlumno(alumno);
             if (respuestaRapida) {
               guardarEntrega(alumno, true);
-            } else {
-              SIREI.utils.mostrarToast('Escribe la calificación y pulsa Guardar.', 'warning');
+              return 'Registrado';
             }
+            SIREI.utils.mostrarToast('Escribe la calificación y pulsa Guardar.', 'warning');
+            return 'Falta calificación';
           }
         });
       });
@@ -769,6 +822,532 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
     });
   }
 
+  // ============================================================
+  //  AUTOREGISTRO DE EVIDENCIAS (flujo del alumno)
+  //  1 Bienvenida · 2 Ponderación · 3 Identificación · 4 Resumen · 5 Éxito
+  // ============================================================
+
+  function wizardTienePonderacion() {
+    return !!(wizardEv && (wizardEv.calificacionNumerica || wizardEv.escalaSuficiencia));
+  }
+
+  function crearOverlayWizard() {
+    const previo = document.getElementById('evidenciaWizardOverlay');
+    if (previo) previo.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'evidenciaWizardOverlay';
+    overlay.style.cssText = 'position:fixed; inset:0; background:#f8fafc; z-index:2147483600; display:flex; flex-direction:column;';
+    overlay.innerHTML = `
+      <div style="flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; background:#1E3A8A; color:#fff;">
+        <div style="min-width:0;">
+          <div style="font-weight:800; font-size:1rem;">📚 Evidencias de aprendizaje</div>
+          <div style="font-size:0.75rem; color:#bfdbfe;">Registro del alumno</div>
+        </div>
+        <button type="button" id="evidWizardCerrar" style="background:#1e40af; color:#fff; border:none; border-radius:8px; padding:8px 14px; font-size:0.9rem; font-weight:700; cursor:pointer;">✕ Cerrar</button>
+      </div>
+      <div id="evidWizardContenido" style="flex:1 1 auto; overflow-y:auto; padding:18px 14px 28px 14px;"></div>`;
+    document.body.appendChild(overlay);
+    document.getElementById('evidWizardCerrar').addEventListener('click', cerrarWizardEvidencia);
+    window.cerrarWizardEvidencia = cerrarWizardEvidencia;
+  }
+
+  function cerrarWizardEvidencia() {
+    if (wizardTimeoutExito) { clearTimeout(wizardTimeoutExito); wizardTimeoutExito = null; }
+    const overlay = document.getElementById('evidenciaWizardOverlay');
+    if (overlay) overlay.remove();
+    window.cerrarWizardEvidencia = null;
+    wizardEv = null;
+    wizardAlumno = null;
+    wizardPaso = 1;
+    // Refresca la lista para actualizar contadores
+    renderizar().catch(function () {});
+  }
+
+  function abrirWizardEvidencia(ev) {
+    if (!ev) return;
+    wizardEv = ev;
+    wizardPaso = 1;
+    wizardCalificacion = '';
+    wizardEscala = '';
+    wizardAlumno = null;
+    wizardAlumnosFiltro = '';
+    crearOverlayWizard();
+    wizardPintar();
+    if (navigator.vibrate) { try { navigator.vibrate(30); } catch (e) {} }
+  }
+
+  function wizardFilaResumen(etiqueta, valorHtml) {
+    return '<div style="display:flex; justify-content:space-between; gap:12px; padding:11px 14px; border-bottom:1px solid #f3f4f6;">' +
+      '<span style="font-size:0.85rem; color:#6b7280; font-weight:700;">' + esc(etiqueta) + '</span>' +
+      '<span style="font-size:0.92rem; color:#111827; text-align:right;">' + valorHtml + '</span>' +
+      '</div>';
+  }
+
+  function wizardPintar() {
+    const cont = document.getElementById('evidWizardContenido');
+    if (!cont || !wizardEv) return;
+    const ev = wizardEv;
+
+    const botonPrincipal = 'width:100%; min-height:54px; border:none; border-radius:12px; background:#1E3A8A; color:#fff; font-size:1.05rem; font-weight:800; cursor:pointer;';
+
+    // ---------- PASO 1: BIENVENIDA ----------
+    if (wizardPaso === 1) {
+      const requisitos = [];
+      if (ev.calificacionNumerica) requisitos.push('una calificación numérica');
+      if (ev.escalaSuficiencia) requisitos.push('una escala de suficiencia');
+      const fechaMax = ev.fechaMaximaEntrega
+        ? '<div style="margin-top:8px; font-size:0.85rem; color:#92400e;">📅 Fecha máxima de entrega: <strong>' + esc(formatearFechaSi(ev.fechaMaximaEntrega)) + '</strong></div>'
+        : '';
+      cont.innerHTML = `
+        <div style="max-width:560px; margin:0 auto; text-align:center;">
+          <div style="font-size:3.2rem; line-height:1;">👋</div>
+          <h2 style="margin:12px 0 6px 0; font-size:1.45rem; color:#111827;">Bienvenido</h2>
+          <p style="margin:0; color:#4b5563;">Vas a registrar la evidencia:</p>
+          <div style="margin:16px 0; background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:16px; box-shadow:0 2px 10px rgba(0,0,0,.05);">
+            <div style="font-size:1.2rem; font-weight:800; color:#1E3A8A;">${esc(ev.nombreEvidencia)}</div>
+            <div style="font-size:0.85rem; color:#6b7280; margin-top:4px;">
+              ${ev.grupo ? esc(ev.grupo) : ''}${ev.periodo ? ' · ' + esc(ev.periodo) : ''}
+            </div>
+            ${ev.nombreProfesor ? '<div style="font-size:0.8rem; color:#6b7280; margin-top:2px;">Docente: ' + esc(ev.nombreProfesor) + '</div>' : ''}
+            ${ev.instrumentoEvaluacion ? '<div style="margin-top:8px;"><a href="' + esc(ev.instrumentoEvaluacion) + '" target="_blank" rel="noopener" style="color:#2563eb; font-size:0.85rem; font-weight:700;">📄 Ver instrumento de evaluación</a></div>' : ''}
+            ${fechaMax}
+            <div style="margin-top:12px; font-size:0.88rem; color:#374151;">
+              ${requisitos.length ? 'Se pedirá <strong>' + requisitos.join(' y ') + '</strong>.' : 'Esta evidencia no requiere ponderación.'}
+            </div>
+          </div>
+          <button type="button" id="evidWizardSiguiente" style="${botonPrincipal}">Comenzar →</button>
+        </div>`;
+      document.getElementById('evidWizardSiguiente').addEventListener('click', function () {
+        wizardPaso = wizardTienePonderacion() ? 2 : 3;
+        wizardPintar();
+      });
+      return;
+    }
+
+    // ---------- PASO 2: PONDERACIÓN ----------
+    if (wizardPaso === 2) {
+      cont.innerHTML = `
+        <div style="max-width:560px; margin:0 auto;">
+          <h2 style="margin:0 0 4px 0; font-size:1.3rem; color:#111827;">Ponderación</h2>
+          <p style="margin:0 0 16px 0; color:#4b5563; font-size:0.92rem;">Pregunta a tu maestro qué ponderación corresponde a tu evidencia y selecciónala.</p>
+
+          ${ev.calificacionNumerica ? `
+            <label style="display:block; font-weight:700; color:#374151; margin-bottom:6px;">Calificación numérica (0 a 10)</label>
+            <input type="number" id="evidWizardCalif" min="0" max="10" step="0.1" inputmode="decimal" value="${esc(wizardCalificacion)}"
+              style="width:100%; min-height:56px; padding:10px 14px; border-radius:12px; border:2px solid #d1d5db; font-size:1.4rem; font-weight:800; text-align:center; box-sizing:border-box; margin-bottom:16px;">
+          ` : ''}
+
+          ${ev.escalaSuficiencia ? `
+            <div style="font-weight:700; color:#374151; margin-bottom:6px;">Escala de suficiencia</div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px;">
+              ${['Excelente', 'Suficiente', 'Insuficiente'].map(function (op) {
+                const sel = wizardEscala === op;
+                return '<button type="button" class="evid-wizard-escala" data-escala="' + op + '" style="flex:1 1 120px; min-height:58px; border-radius:12px; border:2px solid ' +
+                  (sel ? '#1E3A8A' : '#d1d5db') + '; background:' + (sel ? '#eff6ff' : '#fff') + '; color:#111827; font-weight:800; font-size:1rem; cursor:pointer;">' + op + '</button>';
+              }).join('')}
+            </div>
+          ` : ''}
+
+          <div style="display:flex; gap:10px;">
+            <button type="button" id="evidWizardAtras" style="flex:1; min-height:54px; border:none; border-radius:12px; background:#e5e7eb; color:#111827; font-size:1rem; font-weight:800; cursor:pointer;">← Atrás</button>
+            <button type="button" id="evidWizardSiguiente" style="flex:2; min-height:54px; border:none; border-radius:12px; background:#1E3A8A; color:#fff; font-size:1.05rem; font-weight:800; cursor:pointer;">Continuar →</button>
+          </div>
+        </div>`;
+
+      const inputCalif = document.getElementById('evidWizardCalif');
+      if (inputCalif) {
+        inputCalif.addEventListener('input', function () { wizardCalificacion = this.value; });
+        inputCalif.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') document.getElementById('evidWizardSiguiente').click();
+        });
+      }
+      cont.querySelectorAll('.evid-wizard-escala').forEach(function (b) {
+        b.addEventListener('click', function () {
+          wizardEscala = b.dataset.escala;
+          wizardPintar();
+        });
+      });
+      document.getElementById('evidWizardAtras').addEventListener('click', function () {
+        wizardPaso = 1;
+        wizardPintar();
+      });
+      document.getElementById('evidWizardSiguiente').addEventListener('click', function () {
+        if (ev.calificacionNumerica) {
+          const n = parseFloat(wizardCalificacion);
+          if (wizardCalificacion === '' || isNaN(n) || n < 0 || n > 10) {
+            SIREI.utils.mostrarToast('Escribe una calificación de 0 a 10.', 'error');
+            return;
+          }
+        }
+        if (ev.escalaSuficiencia && !wizardEscala) {
+          SIREI.utils.mostrarToast('Selecciona la escala de suficiencia.', 'error');
+          return;
+        }
+        wizardPaso = 3;
+        wizardPintar();
+      });
+      return;
+    }
+
+    // ---------- PASO 3: IDENTIFICACIÓN ----------
+    if (wizardPaso === 3) {
+      cont.innerHTML = `
+        <div style="max-width:620px; margin:0 auto;">
+          <h2 style="margin:0 0 4px 0; font-size:1.3rem; color:#111827;">Identifícate</h2>
+          <p style="margin:0 0 14px 0; color:#4b5563; font-size:0.92rem;">Escanea tu código QR o búscate en la lista.</p>
+
+          <button type="button" id="evidWizardQR" style="width:100%; min-height:58px; border:none; border-radius:12px; background:#0f766e; color:#fff; font-size:1.05rem; font-weight:800; cursor:pointer;">📷 Escanear mi código QR</button>
+
+          <input type="text" id="evidWizardBuscar" placeholder="Escribe tu nombre o CURP…" value="${esc(wizardAlumnosFiltro)}" autocomplete="off"
+            style="width:100%; min-height:50px; margin-top:12px; padding:10px 14px; border-radius:12px; border:1px solid #d1d5db; font-size:1rem; box-sizing:border-box;">
+
+          <div id="evidWizardLista" style="margin-top:10px; max-height:38vh; overflow-y:auto; border:1px solid #e5e7eb; border-radius:12px; background:#fff;"></div>
+          <div id="evidWizardSeleccion"></div>
+
+          <div style="display:flex; gap:10px; margin-top:16px;">
+            <button type="button" id="evidWizardAtras" style="flex:1; min-height:54px; border:none; border-radius:12px; background:#e5e7eb; color:#111827; font-size:1rem; font-weight:800; cursor:pointer;">← Atrás</button>
+            <button type="button" id="evidWizardSiguiente" style="flex:2; min-height:54px; border:none; border-radius:12px; background:#1E3A8A; color:#fff; font-size:1.05rem; font-weight:800; cursor:pointer;" ${wizardAlumno ? '' : 'disabled'}>Continuar →</button>
+          </div>
+        </div>`;
+
+      function pintarSeleccionWizard() {
+        const contSel = document.getElementById('evidWizardSeleccion');
+        const btnSig = document.getElementById('evidWizardSiguiente');
+        if (btnSig) btnSig.disabled = !wizardAlumno;
+        if (!contSel) return;
+        if (!wizardAlumno) { contSel.innerHTML = ''; return; }
+        const ya = entregasExistentes[ev.id] && entregasExistentes[ev.id][wizardAlumno.curp];
+        contSel.innerHTML = '<div style="margin-top:12px; border:2px solid #86efac; background:#f0fdf4; border-radius:12px; padding:12px; text-align:center;">' +
+          '<div style="font-size:0.78rem; color:#166534; font-weight:700;">Alumno seleccionado</div>' +
+          '<div style="font-size:1.15rem; font-weight:800; color:#111827;">' + esc(wizardAlumno.nombreCompleto) + '</div>' +
+          (ya ? '<div style="font-size:0.78rem; color:#92400e; font-weight:700; margin-top:2px;">Ya tiene un registro; se actualizará</div>' : '') +
+          '</div>';
+      }
+
+      function pintarListaAlumnosWizard() {
+        const contLista = document.getElementById('evidWizardLista');
+        if (!contLista) return;
+        const q = String(wizardAlumnosFiltro || '').toLowerCase().trim();
+        const lista = alumnosGrupo.filter(function (a) {
+          if (!q) return true;
+          return String(a.nombreCompleto || '').toLowerCase().indexOf(q) >= 0 ||
+                 String(a.curp || '').toLowerCase().indexOf(q) >= 0;
+        });
+        if (!lista.length) {
+          contLista.innerHTML = '<p style="padding:14px; margin:0; color:#6b7280;">Sin coincidencias.</p>';
+          return;
+        }
+        contLista.innerHTML = lista.map(function (a) {
+          const ya = entregasExistentes[ev.id] && entregasExistentes[ev.id][a.curp];
+          const sel = wizardAlumno && String(wizardAlumno.curp) === String(a.curp);
+          return '<button type="button" class="evid-wizard-alumno" data-curp="' + esc(a.curp) + '" style="display:flex; width:100%; justify-content:space-between; align-items:center; gap:8px; padding:12px 14px; background:' +
+            (sel ? '#eff6ff' : '#fff') + '; border:none; border-bottom:1px solid #f3f4f6; text-align:left; cursor:pointer;">' +
+            '<span style="font-weight:600; color:#111827; font-size:0.95rem;">' + esc(a.nombreCompleto) + '</span>' +
+            '<span style="font-size:0.72rem; font-weight:700; color:' + (ya ? '#166534' : '#92400e') + ';">' + (ya ? '✅ Ya entregó' : '⏳ Pendiente') + '</span>' +
+            '</button>';
+        }).join('');
+        contLista.querySelectorAll('.evid-wizard-alumno').forEach(function (b) {
+          b.addEventListener('click', function () {
+            wizardAlumno = alumnosGrupo.find(function (x) { return String(x.curp) === String(b.dataset.curp); }) || null;
+            pintarListaAlumnosWizard();
+            pintarSeleccionWizard();
+          });
+        });
+      }
+
+      const inputBuscar = document.getElementById('evidWizardBuscar');
+      if (inputBuscar) {
+        inputBuscar.addEventListener('input', function () {
+          wizardAlumnosFiltro = inputBuscar.value;
+          pintarListaAlumnosWizard();
+        });
+      }
+
+      document.getElementById('evidWizardQR').addEventListener('click', function () {
+        SIREI.qr.abrir({
+          titulo: 'Identifícate',
+          subtitulo: 'Escanea tu código QR',
+          continuo: false,
+          etiqueta: function (codigo) {
+            const curp = String(codigo || '').trim().toUpperCase();
+            const al = alumnosGrupo.find(function (a) { return String(a.curp).toUpperCase() === curp; });
+            return al ? al.nombreCompleto : null;
+          },
+          onLeido: function (codigo) {
+            const curp = String(codigo || '').trim().toUpperCase();
+            const al = alumnosGrupo.find(function (a) { return String(a.curp).toUpperCase() === curp; });
+            if (!al) {
+              SIREI.utils.mostrarToast('Ese código no pertenece a este grupo.', 'error');
+              return 'No pertenece al grupo';
+            }
+            wizardAlumno = al;
+            wizardAlumnosFiltro = '';
+            if (wizardPaso === 3) wizardPintar();
+            return al.nombreCompleto;
+          }
+        });
+      });
+
+      document.getElementById('evidWizardAtras').addEventListener('click', function () {
+        wizardPaso = wizardTienePonderacion() ? 2 : 1;
+        wizardPintar();
+      });
+      document.getElementById('evidWizardSiguiente').addEventListener('click', function () {
+        if (!wizardAlumno) {
+          SIREI.utils.mostrarToast('Selecciona a un alumno primero.', 'error');
+          return;
+        }
+        wizardPaso = 4;
+        wizardPintar();
+      });
+
+      pintarListaAlumnosWizard();
+      pintarSeleccionWizard();
+      return;
+    }
+
+    // ---------- PASO 4: RESUMEN ----------
+    if (wizardPaso === 4) {
+      if (!wizardAlumno) { wizardPaso = 3; wizardPintar(); return; }
+      const esNueva = !(entregasExistentes[ev.id] && entregasExistentes[ev.id][wizardAlumno.curp]);
+      const filasPonderacion = [];
+      if (ev.calificacionNumerica) filasPonderacion.push(wizardFilaResumen('Calificación', '<strong>' + esc(wizardCalificacion) + '</strong>'));
+      if (ev.escalaSuficiencia) filasPonderacion.push(wizardFilaResumen('Escala', '<strong>' + esc(wizardEscala) + '</strong>'));
+      if (!filasPonderacion.length) filasPonderacion.push(wizardFilaResumen('Ponderación', 'No aplica'));
+
+      let avisoFecha = '';
+      if (ev.fechaMaximaEntrega) {
+        const fechaMax = parseFechaMax(ev.fechaMaximaEntrega);
+        if (fechaMax && new Date() > fechaMax) {
+          avisoFecha = '<div style="margin-top:10px; background:#fef2f2; border:1px solid #fecaca; border-radius:10px; padding:10px 12px; color:#991b1b; font-size:0.85rem; font-weight:700;">⏰ La fecha máxima de entrega ya pasó; el registro quedará como fuera de fecha.</div>';
+        }
+      }
+
+      cont.innerHTML = `
+        <div style="max-width:620px; margin:0 auto;">
+          <h2 style="margin:0 0 4px 0; font-size:1.3rem; color:#111827;">Revisa tu registro</h2>
+          <p style="margin:0 0 14px 0; color:#4b5563; font-size:0.92rem;">Verifica que todo esté correcto antes de continuar.</p>
+
+          <div style="background:#fff; border:1px solid #e5e7eb; border-radius:12px; overflow:hidden;">
+            ${wizardFilaResumen('Evidencia', '<strong>' + esc(ev.nombreEvidencia) + '</strong>')}
+            ${wizardFilaResumen('Alumno', '<strong>' + esc(wizardAlumno.nombreCompleto) + '</strong>')}
+            ${filasPonderacion.join('')}
+            ${wizardFilaResumen('Fecha y hora', esc(new Date().toLocaleString('es-MX')))}
+          </div>
+
+          ${!esNueva ? '<div style="margin-top:10px; background:#fef3c7; border:1px solid #fcd34d; border-radius:10px; padding:10px 12px; color:#92400e; font-size:0.85rem; font-weight:700;">⚠ Este alumno ya había registrado la evidencia; el registro se actualizará.</div>' : ''}
+          ${avisoFecha}
+
+          <div style="margin-top:14px; background:#eff6ff; border:1px solid #bfdbfe; border-radius:12px; padding:14px; text-align:center;">
+            <div style="font-size:1.7rem; line-height:1;">📣</div>
+            <div style="font-weight:800; color:#1E3A8A; font-size:1rem; margin-top:6px;">Pide al maestro que revise lo que vas a registrar</div>
+            <div style="color:#374151; font-size:0.88rem; margin-top:4px;">El maestro es quien presiona el botón <strong>Registrar</strong>.</div>
+          </div>
+
+          <div style="display:flex; gap:10px; margin-top:16px;">
+            <button type="button" id="evidWizardAtras" style="flex:1; min-height:54px; border:none; border-radius:12px; background:#e5e7eb; color:#111827; font-size:1rem; font-weight:800; cursor:pointer;">← Atrás</button>
+            <button type="button" id="evidWizardRegistrar" style="flex:2; min-height:54px; border:none; border-radius:12px; background:#1E3A8A; color:#fff; font-size:1.05rem; font-weight:800; cursor:pointer;">✅ Registrar (docente)</button>
+          </div>
+        </div>`;
+
+      document.getElementById('evidWizardAtras').addEventListener('click', function () {
+        wizardPaso = 3;
+        wizardPintar();
+      });
+      document.getElementById('evidWizardRegistrar').addEventListener('click', wizardRegistrar);
+      return;
+    }
+
+    // ---------- PASO 5: ÉXITO ----------
+    if (wizardPaso === 5) {
+      cont.innerHTML = `
+        <div style="max-width:560px; margin:0 auto; text-align:center; padding-top:24px;">
+          <div style="font-size:4rem; line-height:1;">✅</div>
+          <h2 style="margin:12px 0 6px 0; font-size:1.45rem; color:#111827;">Registro exitoso</h2>
+          <p style="margin:0; font-size:1.15rem; font-weight:800; color:#1E3A8A;">${esc(wizardAlumno ? wizardAlumno.nombreCompleto : '')}</p>
+          <p style="margin:6px 0 20px 0; color:#4b5563;">La evidencia <strong>${esc(ev.nombreEvidencia)}</strong> quedó registrada.</p>
+          <button type="button" id="evidWizardListo" style="width:100%; min-height:54px; border:none; border-radius:12px; background:#1E3A8A; color:#fff; font-size:1.05rem; font-weight:800; cursor:pointer;">Listo, siguiente alumno</button>
+          <p style="margin-top:12px; color:#9ca3af; font-size:0.8rem;">Esta pantalla se cerrará sola en unos segundos.</p>
+        </div>`;
+      document.getElementById('evidWizardListo').addEventListener('click', cerrarWizardEvidencia);
+      if (wizardTimeoutExito) clearTimeout(wizardTimeoutExito);
+      wizardTimeoutExito = setTimeout(function () {
+        if (document.getElementById('evidenciaWizardOverlay')) cerrarWizardEvidencia();
+      }, 7000);
+      return;
+    }
+  }
+
+  async function wizardRegistrar() {
+    const ev = wizardEv;
+    const alumno = wizardAlumno;
+    if (!ev || !alumno) return;
+
+    const btn = document.getElementById('evidWizardRegistrar');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Registrando…'; }
+
+    try {
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          accion: 'registrarEntrega',
+          token: token,
+          idClase: idGrupo,
+          idEvidencia: ev.id,
+          nombreEvidencia: ev.nombreEvidencia,
+          curpAlumno: alumno.curp,
+          calificacion: wizardCalificacion,
+          escala: wizardEscala,
+          idDocente: idDocente,
+          observaciones: ''
+        })
+      });
+      const result = await response.json();
+
+      if (!result.success) {
+        SIREI.utils.mostrarToast('❌ ' + (result.message || 'No se pudo registrar'), 'error');
+        if (btn) { btn.disabled = false; btn.textContent = '✅ Registrar (docente)'; }
+        return;
+      }
+
+      if (!entregasExistentes[ev.id]) entregasExistentes[ev.id] = {};
+      entregasExistentes[ev.id][alumno.curp] = result.entrega || { curpAlumno: alumno.curp, idEvidencia: ev.id };
+      if (navigator.vibrate) { try { navigator.vibrate(80); } catch (e) {} }
+
+      if (!document.getElementById('evidenciaWizardOverlay')) return;
+      wizardPaso = 5;
+      wizardPintar();
+    } catch (e) {
+      SIREI.utils.mostrarToast('Error de conexión. Avisa al maestro e inténtalo de nuevo.', 'error');
+      if (btn) { btn.disabled = false; btn.textContent = '✅ Registrar (docente)'; }
+    }
+  }
+
   // === Iniciar ===
   await renderizar();
+};
+
+window.cargarEvidenciasDocente = async function (container) {
+  const esc = SIREI.utils.escapeHtml;
+  const tokenActual = sessionStorage.getItem('sirei_token');
+  if (!tokenActual) {
+    container.innerHTML = '<div class="card"><div class="error">Sesión no válida. Vuelve a iniciar sesión.</div></div>';
+    return;
+  }
+  container.innerHTML = '<div class="card" style="text-align:center; padding:32px;"><div class="loader-moderno"><div class="spinner"></div><p>Cargando evidencias…</p></div></div>';
+
+  try {
+    let idDocenteActual = window._sireiIdDocente;
+    if (!idDocenteActual) {
+      const nombreDocente = sessionStorage.getItem('sirei_nombre') || sessionStorage.getItem('sirei_user');
+      const respuestaId = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          accion: 'obtenerIdDocentePorNombre',
+          token: tokenActual,
+          nombre: nombreDocente
+        })
+      });
+      const datosId = await respuestaId.json();
+      if (!datosId.success || !datosId.idDocente) {
+        throw new Error('No se encontró tu perfil de docente. Contacta al administrador.');
+      }
+      idDocenteActual = datosId.idDocente;
+      window._sireiIdDocente = idDocenteActual;
+    }
+
+    const resultados = await Promise.all([
+      fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ accion: 'obtenerAsignacionesDocente', token: tokenActual, idDocente: idDocenteActual })
+      }).then(function (r) { return r.json(); }).catch(function () { return {}; }),
+      fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ accion: 'obtenerGrupos', token: tokenActual })
+      }).then(function (r) { return r.json(); }).catch(function () { return {}; }),
+      fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ accion: 'obtenerAsignaturas', token: tokenActual })
+      }).then(function (r) { return r.json(); }).catch(function () { return {}; })
+    ]);
+
+    const asignaciones = (resultados[0] && resultados[0].asignaciones) || [];
+    const grupos = (resultados[1] && resultados[1].grupos) || [];
+    const materias = (resultados[2] && resultados[2].asignaturas) || [];
+
+    if (!asignaciones.length) {
+      container.innerHTML = '<div class="card"><h2 class="card-title">Evidencias de aprendizaje</h2><p>No tienes asignaciones activas. Contacta al coordinador.</p></div>';
+      return;
+    }
+
+    function nombreGrupo(id) {
+      const g = grupos.find(function (x) { return String(x.id) === String(id); });
+      return g ? g.nombre : ('Grupo ' + id);
+    }
+    function nombreMateria(id) {
+      const m = materias.find(function (x) { return String(x.id) === String(id); });
+      return m ? m.nombre : ('Asignatura ' + id);
+    }
+
+    const opciones = asignaciones.map(function (a, i) {
+      const etiqueta = nombreGrupo(a.idGrupo) + ' · ' + nombreMateria(a.idAsignatura) +
+        (a.tipo === 'subgrupo' && a.nombreSubgrupo ? ' (' + a.nombreSubgrupo + ')' : '');
+      return '<option value="' + i + '">' + esc(etiqueta) + '</option>';
+    }).join('');
+
+    container.innerHTML = `
+      <div class="card">
+        <h2 class="card-title">📚 Evidencias de aprendizaje</h2>
+        <p style="color:#4b5563; margin:0 0 10px 0;">Elige el grupo y la asignatura. Puedes crear evidencias aunque no tengas una clase iniciada.</p>
+        <label for="evidCtxAsignacion" style="display:block; font-weight:700; color:#374151; margin-bottom:6px;">Grupo y asignatura</label>
+        <select id="evidCtxAsignacion" style="width:100%; min-height:48px; padding:10px; border-radius:10px; border:1px solid #d1d5db; font-size:1rem; margin-bottom:14px;">
+          ${opciones}
+        </select>
+        <div id="evidCtxModulo"></div>
+      </div>`;
+
+    const select = document.getElementById('evidCtxAsignacion');
+    const modulo = document.getElementById('evidCtxModulo');
+
+    // Si hay clase activa, se preselecciona su grupo/asignatura
+    let indiceInicial = 0;
+    const claseActiva = window._sireiClaseActiva;
+    if (claseActiva) {
+      const idx = asignaciones.findIndex(function (a) {
+        return String(a.idGrupo) === String(claseActiva.idGrupo) &&
+               String(a.idAsignatura) === String(claseActiva.idAsignatura) &&
+               String(a.idSubgrupo || '') === String(claseActiva.idSubgrupo || '');
+      });
+      if (idx >= 0) indiceInicial = idx;
+    }
+    select.value = String(indiceInicial);
+
+    function montarModulo() {
+      const a = asignaciones[parseInt(select.value, 10)];
+      if (!a || !modulo) return;
+      modulo.innerHTML = '';
+      window.cargarAcademicoDocente(
+        modulo,
+        idDocenteActual,
+        a.idGrupo,
+        a.idAsignatura,
+        a.periodo || '',
+        tokenActual,
+        a.idSubgrupo || ''
+      );
+    }
+
+    select.addEventListener('change', montarModulo);
+    montarModulo();
+  } catch (e) {
+    console.error('Error al cargar evidencias:', e);
+    container.innerHTML = '<div class="card"><div class="error">No se pudo cargar el módulo de evidencias: ' +
+      esc(e && e.message ? e.message : String(e)) + '</div></div>';
+  }
 };
