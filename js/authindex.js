@@ -106,15 +106,16 @@ document.addEventListener('DOMContentLoaded', () => {
     sessionStorage.setItem('sirei_rol', data.rol || '');
     sessionStorage.setItem('sirei_nombre', data.nombreCompleto || '');
     
-    // Redirigir según rol
+    // Redirigir según rol (replace: el login no queda en el historial,
+    // así el botón "atrás" del panel no regresa a la pantalla de acceso)
     const rol = (data.rol || '').toLowerCase();
     if (rol === 'coordinador') {
-        window.location.href = 'coordinador.html';
+        window.location.replace('coordinador.html');
     } else if (rol === 'docente') {
-        window.location.href = 'docente.html';
+        window.location.replace('docente.html');
     } else {
         // admin o cualquier otro
-        window.location.href = 'admin.html';
+        window.location.replace('admin.html');
     }
 } else {
         manejarIntentoFallido(data.message || 'Usuario o contraseña incorrectos.');
