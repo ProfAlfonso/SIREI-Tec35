@@ -286,75 +286,180 @@ SIREI.store = {
 
 // ========== 4. LECTOR QR UNIFICADO ==========
 // Overlay a pantalla completa con la cámara ARRIBA (sin tener que bajar),
-// configuración de alta sensibilidad y modo continuo para escanear varios QR seguidos.
+// alta sensibilidad y modo continuo opcional.
+//
+// Opciones de SIREI.qr.abrir():
+//   titulo       Texto del encabezado.
+//   subtitulo    Texto secundario.
+//   continuo     true (por defecto): sigue escaneando; false: cierra al leer.
+//   etiqueta     function(codigo) -> nombre a mostrar (null = desconocido).
+//   progreso     function() -> texto de progreso opcional.
+//   onLeido      function(codigo) -> texto de detalle opcional.
+//   onCerrar     function() al cerrar manualmente.
+//
+// Robustez:
+//   - Solo hay una instancia activa: abrir espera a que la cámara anterior
+//     se libere por completo (evita "la cámara está en uso" hasta recargar).
+//   - Si la primera configuración falla, reintenta con configuraciones simples.
+//   - La cámara se libera al cerrar, al cambiar de pestaña y al salir.
 SIREI.qr = {
-  _reader: null,
+  _instancia: null,
   _overlay: null,
+  _opciones: null,
   _onCerrar: null,
-  _cerrado: false,
+  _activo: false,
+  _abriendo: false,
+  _iniciando: false,
+  _camaraLista: false,
+  _procesando: false,
+  _pausado: false,
+  _intentos: 0,
+  _ultimoCodigo: '',
+  _ultimoMs: 0,
+  _ultimaDetencion: Promise.resolve(),
 
   disponible: function () {
     return typeof Html5Qrcode !== 'undefined';
   },
 
-  _config: function () {
-    const cfg = {
-      fps: 15,
-      qrbox: function (ancho, alto) {
-        const menor = Math.min(ancho, alto);
-        const lado = Math.max(180, Math.floor(menor * 0.75));
-        return { width: lado, height: lado };
-      },
-      aspectRatio: 1.0,
-      disableFlip: false,
-      experimentalFeatures: { useBarCodeDetectorIfSupported: true },
-      videoConstraints: {
-        facingMode: { ideal: 'environment' },
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        advanced: [{ focusMode: 'continuous' }]
-      }
+  // Tres configuraciones de cámara, de la más completa a la más compatible.
+  _configuraciones: function () {
+    var qrbox = function (ancho, alto) {
+      var menor = Math.min(ancho, alto);
+      var lado = Math.max(180, Math.floor(menor * 0.75));
+      return { width: lado, height: lado };
     };
+    var formatos = null;
     try {
       if (typeof Html5QrcodeSupportedFormats !== 'undefined') {
-        cfg.formatsToSupport = [Html5QrcodeSupportedFormats.QR_CODE];
+        formatos = [Html5QrcodeSupportedFormats.QR_CODE];
       }
-    } catch (e) {}
-    return cfg;
+    } catch (e) { formatos = null; }
+
+    function base(extra) {
+      var cfg = { fps: 15, qrbox: qrbox, aspectRatio: 1.0, disableFlip: false };
+      if (formatos) cfg.formatsToSupport = formatos;
+      if (extra) {
+        for (var k in extra) {
+          if (Object.prototype.hasOwnProperty.call(extra, k)) cfg[k] = extra[k];
+        }
+      }
+      return cfg;
+    }
+
+    return [
+      {
+        camara: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          advanced: [{ focusMode: 'continuous' }]
+        },
+        config: base({ experimentalFeatures: { useBarCodeDetectorIfSupported: true } })
+      },
+      {
+        camara: { facingMode: { ideal: 'environment' } },
+        config: base({ fps: 10 })
+      },
+      {
+        camara: { facingMode: 'user' },
+        config: base({ fps: 10 })
+      }
+    ];
   },
 
   _estado: function (texto, color) {
-    const el = document.getElementById('sireiQrEstado');
+    var el = document.getElementById('sireiQrEstado');
     if (!el) return;
     el.innerHTML = '<span class="sirei-qr-pulse" style="width:10px;height:10px;border-radius:50%;background:' +
       (color || '#3b82f6') + ';display:inline-block;margin-right:6px;"></span>' +
       SIREI.utils.escapeHtml(texto);
   },
 
-  /**
-   * Abre el lector. Opciones:
-   *   titulo, subtitulo, onLeido(codigo), onCerrar(), continuo (por defecto true)
-   */
-  abrir: function (opciones) {
-    opciones = opciones || {};
-    const self = this;
+  _actualizarProgreso: function () {
+    var el = document.getElementById('sireiQrProgreso');
+    if (!el) return;
+    var texto = '';
+    try {
+      if (this._opciones && typeof this._opciones.progreso === 'function') {
+        texto = this._opciones.progreso() || '';
+      }
+    } catch (e) { texto = ''; }
+    el.textContent = texto;
+    el.style.display = texto ? 'block' : 'none';
+  },
 
-    if (!this.disponible()) {
-      SIREI.utils.mostrarToast('El lector QR no está disponible. Revisa tu conexión.', 'error');
-      return;
+  _mensajeError: function (err) {
+    var nombre = '';
+    var msg = '';
+    try {
+      nombre = String((err && err.name) || '');
+      msg = String((err && err.message) || err || '');
+    } catch (e) {}
+    var todo = (nombre + ' ' + msg).toLowerCase();
+    if (todo.indexOf('notallowed') >= 0 || todo.indexOf('permission') >= 0 || todo.indexOf('denied') >= 0 || todo.indexOf('not allowed') >= 0) {
+      return 'Permiso de cámara denegado. Actívalo para este sitio en los ajustes del navegador.';
     }
+    if (todo.indexOf('notfound') >= 0 || todo.indexOf('devicesnotfound') >= 0 || todo.indexOf('no camera') >= 0) {
+      return 'No se encontró ninguna cámara en este dispositivo.';
+    }
+    if (todo.indexOf('notreadable') >= 0 || todo.indexOf('trackstart') >= 0 || todo.indexOf('in use') >= 0 || todo.indexOf('en uso') >= 0) {
+      return 'La cámara está ocupada por otra aplicación. Ciérrala e inténtalo de nuevo.';
+    }
+    if (todo.indexOf('overconstrained') >= 0) {
+      return 'La cámara no soporta esta configuración. Reintenta.';
+    }
+    if (todo.indexOf('abort') >= 0) {
+      return 'La cámara se interrumpió. Reintenta.';
+    }
+    return 'No se pudo abrir la cámara. ' + (msg || 'Inténtalo de nuevo.');
+  },
 
-    this.cerrar(true);
+  _mostrarError: function (err) {
+    var texto = this._mensajeError(err);
+    this._estado('⚠ ' + texto, '#ef4444');
+    var btn = document.getElementById('sireiQrReintentar');
+    if (btn) btn.style.display = 'inline-block';
+    try { SIREI.utils.mostrarToast(texto, 'error'); } catch (e) {}
+  },
 
-    this._cerrado = false;
-    this._onCerrar = typeof opciones.onCerrar === 'function' ? opciones.onCerrar : null;
+  _ocultarError: function () {
+    var btn = document.getElementById('sireiQrReintentar');
+    if (btn) btn.style.display = 'none';
+  },
 
-    const overlay = document.createElement('div');
+  _liberarVideo: function (overlay) {
+    try {
+      var contenedor = overlay || this._overlay;
+      if (!contenedor || !contenedor.querySelector) return;
+      var video = contenedor.querySelector('#sireiQrLector video');
+      if (!video) return;
+      var pistas = video.srcObject && video.srcObject.getTracks ? video.srcObject.getTracks() : [];
+      for (var i = 0; i < pistas.length; i++) {
+        try { pistas[i].stop(); } catch (e) {}
+      }
+      try { video.srcObject = null; } catch (e) {}
+      try { video.pause(); } catch (e) {}
+      try { video.removeAttribute('src'); } catch (e) {}
+      try { video.load(); } catch (e) {}
+    } catch (e) {}
+  },
+
+  _pararLector: async function (lector) {
+    if (!lector) return;
+    try { await lector.stop(); } catch (e) {}
+    try { lector.clear(); } catch (e) {}
+  },
+
+  _construirOverlay: function () {
+    var self = this;
+    var opciones = this._opciones || {};
+    var overlay = document.createElement('div');
     overlay.id = 'sireiQrOverlay';
-    overlay.style.cssText = 'position:fixed; inset:0; background:#0b1220; z-index:2147483000; display:flex; flex-direction:column;';
+    overlay.style.cssText = 'position:fixed; inset:0; background:#0b1220; z-index:2147483700; display:flex; flex-direction:column;';
     overlay.innerHTML = `
       <style>
-        #sireiQrLector { width:100%; max-width:560px; margin:0 auto; background:#000; }
+        #sireiQrLector { width:100%; max-width:560px; margin:0 auto; background:#000; min-height:160px; }
         #sireiQrLector video { width:100% !important; height:auto !important; max-height:52vh; object-fit:cover; display:block; }
         #sireiQrLector [id$="__dashboard"] { display:none !important; }
         .sirei-qr-pulse { animation: sireiQrPulse 1.2s ease-in-out infinite; }
@@ -371,88 +476,192 @@ SIREI.qr = {
         </div>
       </div>
       <div style="flex:0 0 auto;"><div id="sireiQrLector"></div></div>
-      <div id="sireiQrEstado" style="flex:0 0 auto; padding:12px 14px; color:#e5e7eb; font-size:0.92rem; background:#0b1220;">Iniciando cámara…</div>
-      <div id="sireiQrHistorial" style="flex:1 1 auto; overflow-y:auto; padding:0 14px 16px 14px; background:#0b1220; color:#e5e7eb; font-size:0.9rem;"></div>
+      <div style="flex:0 0 auto; padding:10px 14px 4px 14px; background:#0b1220;">
+        <div id="sireiQrEstado" style="color:#e5e7eb; font-size:0.95rem;">Iniciando cámara…</div>
+        <div id="sireiQrProgreso" style="display:none; color:#93c5fd; font-size:0.85rem; font-weight:700; margin-top:3px;"></div>
+        <button type="button" id="sireiQrReintentar" style="display:none; margin-top:8px; background:#1e40af; color:#fff; border:none; border-radius:8px; padding:9px 14px; font-size:0.9rem; font-weight:700;">🔄 Reintentar cámara</button>
+      </div>
+      <div id="sireiQrHistorial" style="flex:1 1 auto; overflow-y:auto; padding:6px 14px 16px 14px; background:#0b1220; color:#e5e7eb; font-size:0.9rem;"></div>
     `;
     document.body.appendChild(overlay);
     this._overlay = overlay;
+    this._pausado = false;
+    this._camaraLista = false;
 
     overlay.querySelector('#sireiQrCerrar').addEventListener('click', function () {
       self.cerrar();
     });
+    overlay.querySelector('#sireiQrReintentar').addEventListener('click', function () {
+      self._ocultarError();
+      self._camaraLista = false;
+      self._iniciarCamara(0);
+    });
+    this._actualizarProgreso();
+  },
 
-    const lector = new Html5Qrcode('sireiQrLector');
-    this._reader = lector;
-    let procesando = false;
+  _agregarHistorial: function (nombre, detalle, ok) {
+    var cont = document.getElementById('sireiQrHistorial');
+    if (!cont) return;
+    var fila = document.createElement('div');
+    fila.style.cssText = 'display:flex; gap:8px; align-items:center; padding:7px 0; border-bottom:1px solid #1f2937;';
+    var icono = document.createElement('span');
+    icono.textContent = ok ? '✅' : '⚠️';
+    var nom = document.createElement('span');
+    nom.style.cssText = 'font-weight:700; color:' + (ok ? '#d1fae5' : '#fecaca') + ';';
+    nom.textContent = nombre;
+    fila.appendChild(icono);
+    fila.appendChild(nom);
+    if (detalle) {
+      var det = document.createElement('span');
+      det.style.cssText = 'color:#93c5fd; font-size:0.8rem; font-weight:700; margin-left:auto; text-align:right;';
+      det.textContent = detalle;
+      fila.appendChild(det);
+    }
+    cont.insertBefore(fila, cont.firstChild);
+  },
 
-    async function alLeer(texto) {
-      if (procesando || self._cerrado) return;
-      procesando = true;
+  // Inicia (o reintenta) la cámara. indice = configuración a probar.
+  _iniciarCamara: async function (indice) {
+    if (!this._activo || this._iniciando) return;
+    var self = this;
+    var configs = this._configuraciones();
+    var config = configs[indice];
+    var overlay = this._overlay;
+    if (!overlay || !config) {
+      this._abriendo = false;
+      this._mostrarError({ message: 'Cámara no disponible' });
+      return;
+    }
+    var contenedor = overlay.querySelector('#sireiQrLector');
+    if (!contenedor) { this._abriendo = false; return; }
 
-      // Detener la cámara de inmediato: evita lecturas repetidas del mismo código
-      try { await lector.stop(); } catch (e) {}
-      if (navigator.vibrate) navigator.vibrate(60);
+    this._iniciando = true;
+    contenedor.innerHTML = '';
+    this._estado(indice === 0 ? 'Iniciando cámara…' : 'Reintentando cámara…', '#60a5fa');
 
-      self._estado('✔ Leído: ' + texto, '#10b981');
+    var lector = null;
+    try {
+      lector = new Html5Qrcode('sireiQrLector');
+    } catch (e) {
+      this._iniciando = false;
+      this._abriendo = false;
+      this._mostrarError(e);
+      return;
+    }
+    this._instancia = lector;
 
-      const hist = document.getElementById('sireiQrHistorial');
-      if (hist) {
-        const fila = document.createElement('div');
-        fila.style.cssText = 'padding:6px 0; border-bottom:1px solid #1f2937;';
-        fila.textContent = '✔ ' + texto;
-        hist.insertBefore(fila, hist.firstChild);
+    try {
+      await lector.start(
+        config.camara,
+        config.config,
+        function (texto) { self._alLeer(texto); },
+        function () {}
+      );
+      if (!this._activo) {
+        await this._pararLector(lector);
+        this._iniciando = false;
+        return;
       }
+      this._intentos = indice;
+      this._iniciando = false;
+      this._abriendo = false;
+      this._camaraLista = true;
+      this._ocultarError();
+      this._estado('Buscando un código…', '#3b82f6');
+      this._prepararLinterna(overlay);
+      this._actualizarProgreso();
+    } catch (err) {
+      try { await lector.stop(); } catch (e) {}
+      try { await lector.clear(); } catch (e) {}
+      this._iniciando = false;
+      if (this._instancia === lector) this._instancia = null;
+      this._liberarVideo(overlay);
+      if (!this._activo) { this._abriendo = false; return; }
+      if (indice + 1 < configs.length) {
+        setTimeout(function () {
+          if (self._activo && !self._camaraLista) self._iniciarCamara(indice + 1);
+        }, 400);
+        return;
+      }
+      this._abriendo = false;
+      this._mostrarError(err);
+    }
+  },
 
+  _alLeer: async function (texto) {
+    if (!this._activo || this._procesando) return;
+    var codigo = String(texto == null ? '' : texto).trim();
+    if (!codigo) return;
+    var ahora = Date.now();
+    if (codigo === this._ultimoCodigo && (ahora - this._ultimoMs) < 2500) return;
+    this._ultimoCodigo = codigo;
+    this._ultimoMs = ahora;
+    this._procesando = true;
+    this._camaraLista = false;
+
+    var lector = this._instancia;
+    this._instancia = null;
+    if (lector) {
+      try { await lector.stop(); } catch (e) {}
+      try { lector.clear(); } catch (e) {}
+    }
+    if (!this._activo) { this._procesando = false; return; }
+
+    if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) {} }
+
+    var opciones = this._opciones || {};
+    var etiqueta = null;
+    if (typeof opciones.etiqueta === 'function') {
+      try { etiqueta = opciones.etiqueta(codigo); } catch (e) { etiqueta = null; }
+    }
+    var esConocido = !(etiqueta === null || etiqueta === undefined || etiqueta === '');
+    var nombre = esConocido ? String(etiqueta) : 'Código no registrado';
+    this._estado('✔ ' + nombre, esConocido ? '#10b981' : '#ef4444');
+
+    var detalle = '';
+    if (typeof opciones.onLeido === 'function') {
       try {
-        if (typeof opciones.onLeido === 'function') {
-          await opciones.onLeido(String(texto).trim());
-        }
+        var res = await opciones.onLeido(codigo);
+        if (res && typeof res === 'object') detalle = res.detalle || '';
+        else if (typeof res === 'string') detalle = res;
       } catch (e) {
         console.error('Error al procesar el código QR:', e);
       }
+    }
+    this._agregarHistorial(nombre, detalle, esConocido);
+    this._actualizarProgreso();
 
-      if (self._cerrado) return;
+    this._procesando = false;
+    if (!this._activo) return;
 
-      if (opciones.continuo === false) {
-        self.cerrar();
-        return;
-      }
-
-      // Modo continuo: reanudar la cámara para el siguiente alumno
-      setTimeout(function () {
-        if (self._cerrado || !self._overlay) return;
-        procesando = false;
-        self._estado('Buscando el siguiente código…', '#3b82f6');
-        lector.start(self._config().videoConstraints, self._config(), alLeer, function () {}).catch(function () {});
-      }, 600);
+    if (opciones.continuo === false) {
+      this.cerrar();
+      return;
     }
 
-    lector.start(this._config().videoConstraints, this._config(), alLeer, function () {})
-      .then(function () {
-        self._estado('Buscando un código…', '#3b82f6');
-        self._prepararLinterna(overlay);
-      })
-      .catch(function (err) {
-        const msg = err && err.message ? err.message : String(err);
-        self._estado('No se pudo abrir la cámara: ' + msg, '#ef4444');
-        SIREI.utils.mostrarToast('No se pudo abrir la cámara. Revisa los permisos del navegador.', 'error');
-      });
+    var self = this;
+    setTimeout(function () {
+      if (!self._activo) return;
+      self._estado('Buscando el siguiente código…', '#3b82f6');
+      self._actualizarProgreso();
+      self._iniciarCamara(self._intentos || 0);
+    }, 700);
   },
 
-  // Muestra el botón de linterna solo si el dispositivo lo soporta (ayuda en cámaras débiles)
+  // Muestra el botón de linterna solo si el dispositivo lo soporta.
   _prepararLinterna: function (overlay) {
     try {
-      const video = overlay.querySelector('#sireiQrLector video');
+      var video = overlay.querySelector('#sireiQrLector video');
       if (!video || !video.srcObject) return;
-      const pista = video.srcObject.getVideoTracks()[0];
+      var pista = video.srcObject.getVideoTracks()[0];
       if (!pista || typeof pista.getCapabilities !== 'function') return;
-      const caps = pista.getCapabilities();
+      var caps = pista.getCapabilities();
       if (!caps || !caps.torch) return;
-      const btn = overlay.querySelector('#sireiQrLinterna');
+      var btn = overlay.querySelector('#sireiQrLinterna');
       if (!btn) return;
       btn.style.display = 'block';
       btn.addEventListener('click', function () {
-        const encendida = btn.dataset.encendida === 'true';
+        var encendida = btn.dataset.encendida === 'true';
         pista.applyConstraints({ advanced: [{ torch: !encendida }] }).then(function () {
           btn.dataset.encendida = String(!encendida);
           btn.style.background = !encendida ? '#f59e0b' : '#374151';
@@ -461,34 +670,115 @@ SIREI.qr = {
     } catch (e) {}
   },
 
+  _pausar: function () {
+    if (!this._activo || !this._camaraLista || this._pausado) return;
+    var self = this;
+    this._pausado = true;
+    this._camaraLista = false;
+    this._procesando = false;
+    var lector = this._instancia;
+    this._instancia = null;
+    this._estado('Cámara pausada. Vuelve a esta pestaña para continuar.', '#f59e0b');
+    if (lector) {
+      this._pararLector(lector).then(function () {
+        self._liberarVideo(self._overlay);
+      });
+    } else {
+      this._liberarVideo(this._overlay);
+    }
+  },
+
+  _reanudar: function () {
+    if (!this._activo || !this._pausado) return;
+    this._pausado = false;
+    var contenedor = document.getElementById('sireiQrLector');
+    if (contenedor) contenedor.innerHTML = '';
+    this._estado('Reanudando cámara…', '#3b82f6');
+    this._iniciarCamara(0);
+  },
+
+  _detener: function (silencioso) {
+    var self = this;
+    var anterior = this._ultimaDetencion;
+    var promesa = (async function () {
+      try { await anterior; } catch (e) {}
+      var lector = self._instancia;
+      var overlay = self._overlay;
+      var cb = self._onCerrar;
+      self._instancia = null;
+      self._overlay = null;
+      self._activo = false;
+      self._abriendo = false;
+      self._iniciando = false;
+      self._camaraLista = false;
+      self._procesando = false;
+      self._pausado = false;
+      self._onCerrar = null;
+
+      if (overlay) overlay.style.display = 'none';
+      if (lector) {
+        try { await lector.stop(); } catch (e) {}
+        try { lector.clear(); } catch (e) {}
+      }
+      self._liberarVideo(overlay);
+      if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      if (!silencioso && typeof cb === 'function') {
+        try { cb(); } catch (e) {}
+      }
+    })();
+    this._ultimaDetencion = promesa;
+    return promesa;
+  },
+
   cerrar: function (silencioso) {
-    this._cerrado = true;
-    const reader = this._reader;
-    const overlay = this._overlay;
-    this._reader = null;
-    this._overlay = null;
+    return this._detener(silencioso);
+  },
 
-    if (reader) {
-      try {
-        reader.stop().then(function () {
-          try { reader.clear(); } catch (e) {}
-        }).catch(function () {});
-      } catch (e) {}
+  abrir: function (opciones) {
+    var self = this;
+    opciones = opciones || {};
+    if (!this.disponible()) {
+      SIREI.utils.mostrarToast('El lector QR no está disponible. Revisa tu conexión.', 'error');
+      return;
     }
-
-    if (overlay) {
-      setTimeout(function () {
-        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
-      }, 200);
-    }
-
-    const cb = this._onCerrar;
+    if (this._abriendo) return;
+    this._abriendo = true;
+    this._opciones = opciones;
+    var alCerrar = typeof opciones.onCerrar === 'function' ? opciones.onCerrar : null;
     this._onCerrar = null;
-    if (!silencioso && typeof cb === 'function') {
-      try { cb(); } catch (e) {}
-    }
+    this._procesando = false;
+    this._pausado = false;
+    this._intentos = 0;
+    this._camaraLista = false;
+    this._ultimoCodigo = '';
+    this._ultimoMs = 0;
+
+    this._detener(true).then(function () {
+      self._abriendo = true;
+      self._onCerrar = alCerrar;
+      self._activo = true;
+      self._construirOverlay();
+      self._iniciarCamara(0);
+    }).catch(function () {
+      self._abriendo = false;
+    });
   }
 };
+
+// La cámara se libera cuando la app pasa a segundo plano (evita "cámara en uso").
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', function () {
+    try {
+      if (!SIREI.qr || !SIREI.qr._activo) return;
+      if (document.visibilityState === 'hidden') SIREI.qr._pausar();
+      else SIREI.qr._reanudar();
+    } catch (e) {}
+  });
+  window.addEventListener('pagehide', function () {
+    try { if (SIREI.qr) SIREI.qr._pausar(); } catch (e) {}
+  });
+}
+
 
 // ========== 5. COLA DE ESCRITURA EN SEGUNDO PLANO ==========
 // Guarda los registros localmente y los envía al backend en segundo plano.
