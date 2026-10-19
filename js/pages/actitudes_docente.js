@@ -246,15 +246,23 @@ window.cargarActitudesDocente = async function(container, idDocente, idGrupo, id
           titulo: 'Asignar actitud',
           subtitulo: 'Escanea el QR de cada alumno',
           continuo: true,
+          etiqueta: function (codigo) {
+            const curp = String(codigo || '').trim().toUpperCase();
+            const alumno = alumnosGrupo.find(function (a) { return String(a.curp).toUpperCase() === curp; });
+            return alumno ? alumno.nombreCompleto : null;
+          },
           onLeido: function (codigo) {
             const curp = String(codigo).trim().toUpperCase();
             const alumno = alumnosGrupo.find(a => a.curp === curp);
             if (!alumno) {
               SIREI.utils.mostrarToast('Alumno no encontrado en este grupo.', 'error');
-              return;
+              return 'No pertenece al grupo';
             }
             document.getElementById('inputAlumno').value = alumno.nombreCompleto;
             asignarActitudPorCURP(curp);
+            const sel = document.getElementById('selectActitud');
+            const opt = sel && sel.options[sel.selectedIndex];
+            return opt ? opt.textContent : 'Asignada';
           }
         });
       });
