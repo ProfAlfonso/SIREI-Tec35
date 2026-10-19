@@ -15,9 +15,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   const token = sessionStorage.getItem('sirei_token');
   const rol = sessionStorage.getItem('sirei_rol') || '';
   if (!token || rol.toLowerCase() !== 'docente') {
-    window.location.href = 'index.html';
+    window.location.replace('index.html');
     return;
   }
+
+  // Protege el botón "atrás": con la sesión activa no debe mostrar el login.
+  instalarGuardiaAtras();
 
   const userNameSpan = document.getElementById('userName');
   if (userNameSpan) {
@@ -54,9 +57,106 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('logoutBtn').addEventListener('click', () => {
     sessionStorage.clear();
-    window.location.href = 'index.html';
+    window.location.replace('index.html');
   });
 });
+
+// ============================================================
+//  SECCIÓN 1.2: PROTECCIÓN DEL BOTÓN "ATRÁS"
+//  Con la sesión activa, retroceder no debe mostrar el login.
+//  Se avisa y se requieren 3 toques (con confirmación final).
+// ============================================================
+
+function instalarGuardiaAtras() {
+  if (!sessionStorage.getItem('sirei_token')) return;
+
+  let toques = 0;
+  let ultimo = 0;
+
+  function empujarGuardia() {
+    try { history.pushState({ sireiGuardia: true }, '', location.href); } catch (e) {}
+  }
+
+  try { empujarGuardia(); } catch (e) { return; }
+
+  window.addEventListener('popstate', function () {
+    // Si se cerró sesión, se permite la navegación normal.
+    if (!sessionStorage.getItem('sirei_token')) return;
+
+    // Si hay una capa abierta (asistente o salidas), el atrás la cierra.
+    if (cerrarCapaAbierta()) {
+      empujarGuardia();
+      toques = 0;
+      return;
+    }
+
+    const ahora = Date.now();
+    if (ahora - ultimo > 3000) toques = 0;
+    ultimo = ahora;
+    toques++;
+
+    if (toques < 3) {
+      empujarGuardia();
+      const restantes = 3 - toques;
+      SIREI.utils.mostrarToast('Presiona atrás ' + restantes + (restantes === 1 ? ' vez más' : ' veces más') + ' para salir de SIREI.', 'warning');
+      return;
+    }
+
+    toques = 0;
+    empujarGuardia();
+    mostrarDialogoSalirSirei();
+  });
+}
+
+function cerrarCapaAbierta() {
+  // Lector QR abierto
+  if (SIREI.qr && document.getElementById('sireiQrOverlay')) {
+    try { SIREI.qr.cerrar(); return true; } catch (e) {}
+  }
+  // Asistente de autoregistro de evidencias
+  if (window.cerrarWizardEvidencia && document.getElementById('evidenciaWizardOverlay')) {
+    try {
+      window.cerrarWizardEvidencia();
+      return true;
+    } catch (e) {}
+  }
+  // Modal de entradas / salidas
+  const modalSalidas = document.getElementById('modalSalidasFull');
+  if (modalSalidas && modalSalidas.classList.contains('abierto')) {
+    const btn = document.getElementById('btnCerrarSalidasFull');
+    if (btn) { btn.click(); return true; }
+  }
+  return false;
+}
+
+function mostrarDialogoSalirSirei() {
+  if (document.getElementById('dialogoSalirSirei')) return;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'dialogoSalirSirei';
+  overlay.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,.72); z-index:2147482500; display:flex; align-items:center; justify-content:center; padding:20px;';
+  overlay.innerHTML = `
+    <div style="background:#fff; border-radius:16px; max-width:420px; width:100%; padding:22px; box-shadow:0 20px 60px rgba(0,0,0,.35); text-align:center;">
+      <div style="font-size:2.4rem; line-height:1;">🚪</div>
+      <h3 style="margin:10px 0 6px 0; font-size:1.25rem; color:#111827;">¿Salir de SIREI?</h3>
+      <p style="margin:0 0 18px 0; color:#4b5563; font-size:0.95rem;">Tu sesión seguirá iniciada. Solo se cerrará cuando uses “Cerrar sesión”.</p>
+      <div style="display:flex; gap:10px;">
+        <button type="button" id="btnQuedarmeSirei" style="flex:1; min-height:48px; border:none; border-radius:10px; background:#f3f4f6; color:#111827; font-weight:800; font-size:1rem; cursor:pointer;">Quedarme</button>
+        <button type="button" id="btnSalirSirei" style="flex:1; min-height:48px; border:none; border-radius:10px; background:#1E3A8A; color:#fff; font-weight:800; font-size:1rem; cursor:pointer;">Salir</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#btnQuedarmeSirei').addEventListener('click', function () {
+    overlay.remove();
+    try { history.pushState({ sireiGuardia: true }, '', location.href); } catch (e) {}
+    SIREI.utils.mostrarToast('Sigues dentro de SIREI.');
+  });
+  overlay.querySelector('#btnSalirSirei').addEventListener('click', function () {
+    sessionStorage.setItem('sireiSalidaIntencional', '1');
+    window.location.replace('index.html');
+  });
+}
 
 // ============================================================
 //  SECCIÓN 1.5: NAVEGACIÓN DE PESTAÑAS Y CARGA DE TABLAS
@@ -66,22 +166,56 @@ async function cargarTabla(tab) {
   const mainContainer = document.getElementById('tabContent');
   if (!mainContainer) return;
 
-  Array.from(mainContainer.children).forEach(child => {
-    child.style.display = 'none';
-  });
-
   let tabContainer = document.getElementById('tab-container-' + tab);
   if (!tabContainer) {
     tabContainer = document.createElement('div');
     tabContainer.id = 'tab-container-' + tab;
     mainContainer.appendChild(tabContainer);
   }
+
+  // Solo se conserva el contenido de la pestaña visible; así no quedan
+  // dos copias del mismo módulo con los mismos ids (evidencias, etc.).
+  Array.from(mainContainer.children).forEach(function (child) {
+    if (child === tabContainer) return;
+    child.style.display = 'none';
+    child.innerHTML = '';
+  });
+
   tabContainer.style.display = 'block';
 
   if (tab === 'inicio') {
     await cargarInicio(tabContainer);
   } else if (tab === 'resultados') {
     await cargarResultadosTab(tabContainer);
+  } else if (tab === 'evidencias') {
+    await cargarEvidenciasTab(tabContainer);
+  }
+}
+
+async function cargarEvidenciasTab(container) {
+  container.innerHTML = `
+    <div class="card" style="text-align:center; padding:32px;">
+      <div class="loader-moderno"><div class="spinner"></div><p>Cargando evidencias…</p></div>
+    </div>`;
+
+  try {
+    if (typeof window.cargarEvidenciasDocente === 'undefined') {
+      await new Promise(function (resolve, reject) {
+        const script = document.createElement('script');
+        script.src = 'js/pages/academico_docente.js?v=2';
+        script.onload = resolve;
+        script.onerror = function () { reject(new Error('No se pudo descargar el módulo de evidencias.')); };
+        document.head.appendChild(script);
+      });
+    }
+    if (typeof window.cargarEvidenciasDocente !== 'function') {
+      throw new Error('El módulo de evidencias no está disponible.');
+    }
+    await window.cargarEvidenciasDocente(container);
+  } catch (e) {
+    console.error('Error al cargar evidencias:', e);
+    container.innerHTML = '<div class="card"><div class="error">No se pudo cargar el módulo de evidencias: ' +
+      SIREI.utils.escapeHtml(e && e.message ? e.message : String(e)) + '</div></div>';
   }
 }
 
@@ -182,6 +316,12 @@ async function cargarInicio(containerParam) {
   ]);
 
   const dataId = resultados[0];
+  if (dataId && dataId.success === false && /sesi[oó]n/i.test(String(dataId.message || ''))) {
+    // La sesión guardada ya no es válida: se limpia y se manda al login.
+    sessionStorage.clear();
+    window.location.replace('index.html');
+    return;
+  }
   if (dataId.success && dataId.idDocente) {
     idDocente = dataId.idDocente;
     window._sireiIdDocente = idDocente;
@@ -231,6 +371,7 @@ async function cargarInicio(containerParam) {
 
   if (resultados2[0] && resultados2[0].success) asignaciones = resultados2[0].asignaciones || [];
   if (resultados2[1] && resultados2[1].success) claseActiva = resultados2[1].claseActiva;
+  window._sireiClaseActiva = claseActiva || null;
 
   if (claseActiva) {
     await mostrarPanelesClaseActiva(container, idDocente, claseActiva, grupos, asignaturas, token);
@@ -497,10 +638,12 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
     const container = document.getElementById('actitudesDocenteContainer');
     if (!container || container.dataset.cargado) return;
     container.dataset.cargado = 'true';
+    if (container.isConnected === false) return;
     if (typeof window.cargarActitudesDocente === 'undefined') {
       const script = document.createElement('script');
       script.src = 'js/pages/actitudes_docente.js';
       script.onload = () => {
+        if (container.isConnected === false) return;
         window._precargaActitudes = window.cargarActitudesDocente(container, idDocente, claseActiva.idGrupo, claseActiva.idAsignatura, claseActiva.periodo, token, claseActiva.idSubgrupo);
       };
       script.onerror = () => {
@@ -516,10 +659,12 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
     const container = document.getElementById('academicoDocenteContainer');
     if (!container || container.dataset.cargado) return;
     container.dataset.cargado = 'true';
+    if (container.isConnected === false) return;
     if (typeof window.cargarAcademicoDocente === 'undefined') {
       const script = document.createElement('script');
       script.src = 'js/pages/academico_docente.js';
       script.onload = () => {
+        if (container.isConnected === false) return;
         window._precargaAcademico = window.cargarAcademicoDocente(container, idDocente, claseActiva.idGrupo, claseActiva.idAsignatura, claseActiva.periodo, token, claseActiva.idSubgrupo);
       };
       script.onerror = () => {
@@ -905,19 +1050,42 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
       titulo: 'Pasar asistencia',
       subtitulo: 'Escanea el QR de cada alumno',
       continuo: true,
+      etiqueta: (codigo) => {
+        const curp = String(codigo).trim().toUpperCase();
+        const alumno = alumnosGrupo.find(a => a.curp === curp);
+        return alumno ? nombreParaMostrar(alumno) : null;
+      },
+      progreso: () => {
+        const resumen = document.getElementById('resumen-asistencia');
+        if (!resumen) return '';
+        let registrados = 0;
+        resumen.querySelectorAll('div[data-curp] span:last-child').forEach(function (s) {
+          const estado = (s.textContent || '').trim();
+          if (estado === 'Presente' || estado === 'Retardo') registrados++;
+        });
+        return registrados + ' de ' + alumnosGrupo.length + ' con asistencia registrada';
+      },
       onLeido: (codigo) => {
         const curp = String(codigo).trim().toUpperCase();
         const alumno = alumnosGrupo.find(a => a.curp === curp);
         if (!alumno) {
           SIREI.utils.mostrarToast('Alumno no encontrado en este grupo.', 'error');
-          return;
+          return 'No pertenece al grupo';
         }
+
         const chkRetardo = document.getElementById('chkRetardo');
         const estado = chkRetardo && chkRetardo.checked ? 'Retardo' : 'Presente';
-        const tipoToast = estado === 'Retardo' ? 'warning' : 'success';
-        SIREI.utils.mostrarToast(nombreParaMostrar(alumno) + ' - ' + estado, tipoToast);
 
-        // Actualizar la vista al instante
+        // Si ya estaba registrado, se avisa en lugar de volver a enviarlo
+        const resumen = document.getElementById('resumen-asistencia');
+        const fila = resumen ? resumen.querySelector('div[data-curp="' + curp + '"] span:last-child') : null;
+        const estadoActual = fila ? (fila.textContent || '').trim() : '';
+        if (estadoActual === 'Presente' || estadoActual === 'Retardo') {
+          SIREI.utils.mostrarToast(nombreParaMostrar(alumno) + ' ya estaba: ' + estadoActual, 'warning');
+          return 'Ya registrado: ' + estadoActual;
+        }
+
+        SIREI.utils.mostrarToast(nombreParaMostrar(alumno) + ' - ' + estado, estado === 'Retardo' ? 'warning' : 'success');
         actualizarEstadoAlumno(curp, estado);
 
         // El registro se manda en segundo plano (no bloquea la interfaz)
@@ -931,6 +1099,7 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
           idAsignatura: claseActiva.idAsignatura,
           periodo: claseActiva.periodo
         });
+        return estado;
       }
     });
   });
@@ -1242,8 +1411,8 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     if (msalTick) { clearInterval(msalTick); msalTick = null; }
   }
 
-  // ---------- Estado actual + historial ----------
-  async function actualizarEstadoSalidas() {
+  // ---------- Estado actual (las salidas se consultan aparte del historial) ----------
+  async function msalRefrescarSalidas() {
     try {
       const resp = await fetch(API_URL, {
         method: 'POST',
@@ -1261,11 +1430,36 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
         msalEstado.fueraDefinitivo = todas.filter(function (s) { return s.estado === 'Fuera definitivo'; });
         msalEstado.banoOcupado = msalEstado.fuera.some(function (s) { return msalNorm(s.motivo) === 'baño'; });
         msalPintarEstadoActual();
+        if (msalPantalla === '3a') msalEvaluarBano();
+        if (msalPantalla === '3b') msalEvaluarOtro();
       }
     } catch (e) {
       console.error('Error al leer salidas:', e);
     }
-    try { await msalActualizarHistorial(); } catch (e) {}
+  }
+
+  // Aplica el movimiento local al instante (sin esperar otra vuelta al servidor).
+  // Se usa para que "Ya puedes salir" aparezca de inmediato; luego se refresca.
+  function msalAplicarMovimientoLocal(esEntrada, curp, motivo, motivoOtro, vaARegresar, salidaTimestamp) {
+    if (esEntrada) {
+      msalEstado.fuera = msalEstado.fuera.filter(function (s) { return s.curp !== curp; });
+      msalEstado.fueraDefinitivo = msalEstado.fueraDefinitivo.filter(function (s) { return s.curp !== curp; });
+    } else {
+      const nuevo = {
+        curp: curp,
+        motivo: motivo,
+        motivo_otro: motivoOtro || '',
+        estado: vaARegresar ? 'Fuera' : 'Fuera definitivo',
+        salidaFormateada: salidaTimestamp || '',
+        salidaTimestamp: salidaTimestamp || ''
+      };
+      if (vaARegresar) msalEstado.fuera.push(nuevo);
+      else msalEstado.fueraDefinitivo.push(nuevo);
+    }
+    msalEstado.banoOcupado = msalEstado.fuera.some(function (s) { return msalNorm(s.motivo) === 'baño'; });
+    msalPintarEstadoActual();
+    if (msalPantalla === '3a') msalEvaluarBano();
+    if (msalPantalla === '3b') msalEvaluarOtro();
   }
 
   function msalPintarEstadoActual() {
@@ -1403,7 +1597,15 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     modal.classList.add('abierto');
     msalIrA('1');
     msalIniciarTick();
-    await actualizarEstadoSalidas();
+    const fuera = msalEl('listaAlumnosFuera');
+    if (fuera) fuera.innerHTML = '<span style="color:#6b7280;">Cargando…</span>';
+    const hist = msalEl('listaHistorial');
+    if (hist) hist.innerHTML = '<p style="color:#6b7280; font-size:0.9rem;">Cargando historial…</p>';
+    await msalRefrescarSalidas();
+    // El historial se pide cuando el docente abre esa sección (no bloquea el registro)
+    if (document.querySelector('#modalSalidasFull .msal-historial[open]')) {
+      msalActualizarHistorial().catch(function () {});
+    }
   }
 
   function msalCerrarModal() {
@@ -1415,12 +1617,42 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     msalIrA('1');
   }
 
+  // ---------- Aviso instantáneo mientras el servidor responde ----------
+  function msalMostrarProcesando(nombre) {
+    const cont = msalEl('confirmacionSalidaEntrada');
+    if (!cont) return;
+    cont.style.zIndex = '2147483600';
+    cont.dataset.procesando = '1';
+    cont.innerHTML = `
+      <div class="confirmacion-overlay">
+        <div class="confirmacion-tarjeta">
+          <div class="spinner" style="margin:0 auto 4px auto;"></div>
+          <h2 style="margin:6px 0 4px 0; font-size:1.3rem; color:#111827;">Registrando…</h2>
+          <p style="margin:0; font-size:1.05rem; font-weight:700; color:#1E3A8A;">${SIREI.utils.escapeHtml(nombre || '')}</p>
+        </div>
+      </div>`;
+    cont.style.display = 'block';
+  }
+
+  function msalOcultarProcesando() {
+    const cont = msalEl('confirmacionSalidaEntrada');
+    if (cont && cont.dataset.procesando === '1') {
+      cont.style.display = 'none';
+      cont.innerHTML = '';
+      delete cont.dataset.procesando;
+    }
+  }
+
   // ---------- Confirmación (3 s y vuelve a la Pantalla 1) ----------
   function msalOcultarConfirmacion() {
     if (window._msalTimeoutConf) { clearTimeout(window._msalTimeoutConf); window._msalTimeoutConf = null; }
     if (window._msalIntervalConf) { clearInterval(window._msalIntervalConf); window._msalIntervalConf = null; }
     const cont = msalEl('confirmacionSalidaEntrada');
-    if (cont) { cont.style.display = 'none'; cont.innerHTML = ''; }
+    if (cont) {
+      cont.style.display = 'none';
+      cont.innerHTML = '';
+      delete cont.dataset.procesando;
+    }
   }
 
   function msalMostrarConfirmacion(datos) {
@@ -1539,6 +1771,9 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     const btn = msalEl('msalBtnRegistrar');
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Registrando…'; }
 
+    // Feedback inmediato: el aviso "Registrando…" aparece antes de la red.
+    msalMostrarProcesando(alumno.nombreCompleto);
+
     try {
       const params = esEntrada
         ? { accion: 'registrarEntrada', token: token, idClase: claseActiva.idClase, curpAlumno: curp }
@@ -1552,6 +1787,7 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
       const result = await response.json();
 
       if (!result.success) {
+        msalOcultarProcesando();
         SIREI.utils.mostrarToast('❌ ' + (result.message || 'Error al registrar'), 'error');
         if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
         return;
@@ -1569,20 +1805,26 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
 
       const esDefinitiva = !esEntrada && (!vaARegresar || result.estado === 'Fuera definitivo');
       const motivoMostrar = (motivo === 'Otro' && motivoOtro) ? ('Otro: ' + motivoOtro) : (motivo || '');
+      const salidaRef = result.salidaTimestamp || (esEntrada ? null : new Date().toISOString());
 
       if (navigator.vibrate) navigator.vibrate(60);
       msalReiniciarFormulario();           // regla 7: reinicia tras éxito
-      await actualizarEstadoSalidas();      // refresca (ocupa/libera el bloqueo)
 
+      // 1) Estado local al instante + confirmación (sin esperar más al servidor)
+      msalAplicarMovimientoLocal(esEntrada, curp, motivo, motivoOtro, vaARegresar, salidaRef);
       msalMostrarConfirmacion({
         tipo: esEntrada ? 'entrada' : 'salida',
         nombre: alumno.nombreCompleto,
         motivo: motivoMostrar,
         duracion: duracionFinal || '00:00:00',
-        salidaTimestamp: result.salidaTimestamp || (esEntrada ? null : new Date().toISOString()),
+        salidaTimestamp: salidaRef,
         definitiva: esDefinitiva
       });
+
+      // 2) Refresco real en segundo plano (no bloquea la confirmación)
+      msalRefrescarSalidas().catch(function () {});
     } catch (e) {
+      msalOcultarProcesando();
       SIREI.utils.mostrarToast('Error de conexión: ' + e.message, 'error');
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '✅ Registrar'; }
@@ -1607,9 +1849,7 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
       const result = await response.json();
       if (result.success) {
         SIREI.utils.mostrarToast('✅ Escape registrado. Asígnale una actitud en el panel Actitudinal.');
-        await actualizarEstadoSalidas();
-        if (msalPantalla === '3a') msalEvaluarBano();
-        if (msalPantalla === '3b') msalEvaluarOtro();
+        await msalRefrescarSalidas();
       } else {
         SIREI.utils.mostrarToast('❌ ' + (result.message || 'Error al registrar escape'), 'error');
       }
@@ -1685,7 +1925,7 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
     });
   }
 
-  // Botón QR: procesa de inmediato y cierra la cámara tras la lectura (regla 4)
+  // Botón QR: cierra la cámara de inmediato y registra en segundo plano
   const msalBtnQR = msalEl('msalBtnQR');
   if (msalBtnQR) {
     msalBtnQR.addEventListener('click', function () {
@@ -1693,10 +1933,25 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
         titulo: 'Entradas / Salidas',
         subtitulo: 'Escanea el QR del alumno',
         continuo: false,
+        etiqueta: function (codigo) {
+          const curp = String(codigo || '').trim().toUpperCase();
+          const al = alumnosGrupo.find(function (a) { return a.curp === curp; });
+          return al ? al.nombreCompleto : null;
+        },
         onLeido: function (codigo) {
-          return msalProcesar(String(codigo || '').trim().toUpperCase());
+          // No se espera el registro: así la cámara se cierra al instante
+          msalProcesar(String(codigo || '').trim().toUpperCase());
+          return 'Registrando…';
         }
       });
+    });
+  }
+
+  // El historial se carga solo cuando se abre esa sección
+  const msalHistorial = document.querySelector('#modalSalidasFull .msal-historial');
+  if (msalHistorial) {
+    msalHistorial.addEventListener('toggle', function () {
+      if (msalHistorial.open) msalActualizarHistorial().catch(function () {});
     });
   }
 
