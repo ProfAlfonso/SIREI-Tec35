@@ -302,6 +302,13 @@ SIREI.store = {
 //     se libere por completo (evita "la cámara está en uso" hasta recargar).
 //   - Si la primera configuración falla, reintenta con configuraciones simples.
 //   - La cámara se libera al cerrar, al cambiar de pestaña y al salir.
+//
+// Cámara:
+//   - Intenta abrir la cámara trasera (la adecuada para leer QR).
+//   - Si el equipo abre la delantera, se cambia sola a la trasera cuando
+//     el dispositivo reporta más de una cámara.
+//   - El botón "🔄 Cámara" permite cambiar manualmente; la elección se
+//     recuerda en ese equipo para las próximas veces.
 SIREI.qr = {
   _instancia: null,
   _overlay: null,
@@ -317,13 +324,23 @@ SIREI.qr = {
   _ultimoCodigo: '',
   _ultimoMs: 0,
   _ultimaDetencion: Promise.resolve(),
+  _camaras: [],
+  _camaraActual: null,
+  _camaraPreferidaId: '',
+  _preferenciaGuardada: false,
+  _autoCambioHecho: false,
+  _cambiando: false,
 
   disponible: function () {
     return typeof Html5Qrcode !== 'undefined';
   },
 
-  // Tres configuraciones de cámara, de la más completa a la más compatible.
-  _configuraciones: function () {
+  // Configuraciones de cámara, de la más completa a la más compatible.
+  // Importante: html5-qrcode solo acepta como primer argumento un objeto con
+  // UNA sola clave ({ facingMode: { exact: 'environment' } } o { deviceId: ... }).
+  // Por eso aquí se usa la opción `videoConstraints`, que sí admite resolución
+  // y enfoque continuo, y permite elegir cámara por id.
+  _configuraciones: function (dispositivoId) {
     var qrbox = function (ancho, alto) {
       var menor = Math.min(ancho, alto);
       var lado = Math.max(180, Math.floor(menor * 0.75));
@@ -336,9 +353,10 @@ SIREI.qr = {
       }
     } catch (e) { formatos = null; }
 
-    function base(extra) {
+    function base(constraints, extra) {
       var cfg = { fps: 15, qrbox: qrbox, aspectRatio: 1.0, disableFlip: false };
       if (formatos) cfg.formatsToSupport = formatos;
+      if (constraints) cfg.videoConstraints = constraints;
       if (extra) {
         for (var k in extra) {
           if (Object.prototype.hasOwnProperty.call(extra, k)) cfg[k] = extra[k];
@@ -347,25 +365,51 @@ SIREI.qr = {
       return cfg;
     }
 
-    return [
-      {
-        camara: {
-          facingMode: { ideal: 'environment' },
+    var lista = [];
+
+    // 1) Si el docente ya eligió una cámara, se intenta esa primero.
+    if (dispositivoId) {
+      lista.push({
+        camara: { deviceId: { exact: dispositivoId } },
+        config: base({
+          deviceId: { exact: dispositivoId },
           width: { ideal: 1280 },
           height: { ideal: 720 },
           advanced: [{ focusMode: 'continuous' }]
-        },
-        config: base({ experimentalFeatures: { useBarCodeDetectorIfSupported: true } })
-      },
-      {
-        camara: { facingMode: { ideal: 'environment' } },
-        config: base({ fps: 10 })
-      },
-      {
-        camara: { facingMode: 'user' },
-        config: base({ fps: 10 })
-      }
-    ];
+        }, { experimentalFeatures: { useBarCodeDetectorIfSupported: true } })
+      });
+      lista.push({
+        camara: { deviceId: { exact: dispositivoId } },
+        config: base({ deviceId: { exact: dispositivoId } })
+      });
+    }
+
+    // 2) Cámara trasera forzada (la ideal para leer QR).
+    lista.push({
+      camara: { facingMode: { exact: 'environment' } },
+      config: base({
+        facingMode: { exact: 'environment' },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        advanced: [{ focusMode: 'continuous' }]
+      }, { experimentalFeatures: { useBarCodeDetectorIfSupported: true } })
+    });
+    lista.push({
+      camara: { facingMode: { exact: 'environment' } },
+      config: base({ facingMode: { exact: 'environment' } })
+    });
+
+    // 3) Cámara trasera "preferida" y, al final, cualquier cámara.
+    lista.push({
+      camara: { facingMode: 'environment' },
+      config: base(null)
+    });
+    lista.push({
+      camara: { facingMode: 'user' },
+      config: base(null, { fps: 10 })
+    });
+
+    return lista;
   },
 
   _estado: function (texto, color) {
@@ -416,6 +460,7 @@ SIREI.qr = {
   },
 
   _mostrarError: function (err) {
+    this._cambiando = false;
     var texto = this._mensajeError(err);
     this._estado('⚠ ' + texto, '#ef4444');
     var btn = document.getElementById('sireiQrReintentar');
@@ -471,6 +516,7 @@ SIREI.qr = {
           <div style="font-size:0.78rem; color:#9ca3af;">${SIREI.utils.escapeHtml(opciones.subtitulo || 'Apunta la cámara al código')}</div>
         </div>
         <div style="display:flex; gap:8px; flex:0 0 auto;">
+          <button type="button" id="sireiQrCambiar" title="Cambiar cámara" aria-label="Cambiar cámara" style="display:none; background:#374151; color:#fff; border:none; border-radius:8px; padding:8px 10px; font-size:0.85rem; font-weight:600;">🔄 Cámara</button>
           <button type="button" id="sireiQrLinterna" title="Linterna" style="display:none; background:#374151; color:#fff; border:none; border-radius:8px; padding:8px 12px; font-size:0.9rem; font-weight:600;">🔦</button>
           <button type="button" id="sireiQrCerrar" style="background:#374151; color:#fff; border:none; border-radius:8px; padding:8px 14px; font-size:0.9rem; font-weight:600;">✕ Cerrar</button>
         </div>
@@ -479,6 +525,7 @@ SIREI.qr = {
       <div style="flex:0 0 auto; padding:10px 14px 4px 14px; background:#0b1220;">
         <div id="sireiQrEstado" style="color:#e5e7eb; font-size:0.95rem;">Iniciando cámara…</div>
         <div id="sireiQrProgreso" style="display:none; color:#93c5fd; font-size:0.85rem; font-weight:700; margin-top:3px;"></div>
+        <div id="sireiQrAyuda" style="display:none; color:#9ca3af; font-size:0.78rem; margin-top:3px;">Si no enfoca bien, cambia de cámara con el botón 🔄.</div>
         <button type="button" id="sireiQrReintentar" style="display:none; margin-top:8px; background:#1e40af; color:#fff; border:none; border-radius:8px; padding:9px 14px; font-size:0.9rem; font-weight:700;">🔄 Reintentar cámara</button>
       </div>
       <div id="sireiQrHistorial" style="flex:1 1 auto; overflow-y:auto; padding:6px 14px 16px 14px; background:#0b1220; color:#e5e7eb; font-size:0.9rem;"></div>
@@ -496,6 +543,10 @@ SIREI.qr = {
       self._camaraLista = false;
       self._iniciarCamara(0);
     });
+    var btnCambiarCamara = overlay.querySelector('#sireiQrCambiar');
+    if (btnCambiarCamara) {
+      btnCambiarCamara.addEventListener('click', function () { self._cambiarCamara(); });
+    }
     this._actualizarProgreso();
   },
 
@@ -524,7 +575,7 @@ SIREI.qr = {
   _iniciarCamara: async function (indice) {
     if (!this._activo || this._iniciando) return;
     var self = this;
-    var configs = this._configuraciones();
+    var configs = this._configuraciones(this._camaraPreferidaId);
     var config = configs[indice];
     var overlay = this._overlay;
     if (!overlay || !config) {
@@ -570,6 +621,7 @@ SIREI.qr = {
       this._estado('Buscando un código…', '#3b82f6');
       this._prepararLinterna(overlay);
       this._actualizarProgreso();
+      this._detectarCamaras();
     } catch (err) {
       try { await lector.stop(); } catch (e) {}
       try { await lector.clear(); } catch (e) {}
@@ -641,33 +693,214 @@ SIREI.qr = {
 
     var self = this;
     setTimeout(function () {
-      if (!self._activo) return;
+      if (!self._activo || self._cambiando) return;
       self._estado('Buscando el siguiente código…', '#3b82f6');
       self._actualizarProgreso();
-      self._iniciarCamara(self._intentos || 0);
+      self._iniciarCamara(0);
     }, 700);
   },
 
-  // Muestra el botón de linterna solo si el dispositivo lo soporta.
+  // Muestra el botón de linterna solo si la cámara actual lo soporta.
   _prepararLinterna: function (overlay) {
     try {
+      if (!overlay) return;
+      var btn = overlay.querySelector('#sireiQrLinterna');
+      if (!btn) return;
+      btn.style.display = 'none';
+      btn.dataset.encendida = 'false';
+      btn.style.background = '#374151';
       var video = overlay.querySelector('#sireiQrLector video');
       if (!video || !video.srcObject) return;
       var pista = video.srcObject.getVideoTracks()[0];
       if (!pista || typeof pista.getCapabilities !== 'function') return;
       var caps = pista.getCapabilities();
       if (!caps || !caps.torch) return;
-      var btn = overlay.querySelector('#sireiQrLinterna');
-      if (!btn) return;
       btn.style.display = 'block';
-      btn.addEventListener('click', function () {
+      btn.onclick = function () {
         var encendida = btn.dataset.encendida === 'true';
         pista.applyConstraints({ advanced: [{ torch: !encendida }] }).then(function () {
           btn.dataset.encendida = String(!encendida);
           btn.style.background = !encendida ? '#f59e0b' : '#374151';
         }).catch(function () {});
-      });
+      };
     } catch (e) {}
+  },
+
+  // ---------- Selección y cambio de cámara ----------
+  _leerCamaraActual: function () {
+    try {
+      var overlay = this._overlay;
+      if (!overlay) return null;
+      var video = overlay.querySelector('#sireiQrLector video');
+      if (!video || !video.srcObject) return null;
+      var pista = video.srcObject.getVideoTracks()[0];
+      if (!pista) return null;
+      var ajustes = (typeof pista.getSettings === 'function') ? pista.getSettings() : {};
+      return {
+        id: ajustes.deviceId || '',
+        etiqueta: pista.label || '',
+        facingMode: ajustes.facingMode || ''
+      };
+    } catch (e) { return null; }
+  },
+
+  _listarCamaras: async function () {
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return [];
+      var dispositivos = await navigator.mediaDevices.enumerateDevices();
+      var lista = [];
+      for (var i = 0; i < dispositivos.length; i++) {
+        if (dispositivos[i].kind === 'videoinput') {
+          lista.push({
+            id: dispositivos[i].deviceId,
+            etiqueta: dispositivos[i].label || ('Cámara ' + (lista.length + 1))
+          });
+        }
+      }
+      return lista;
+    } catch (e) { return []; }
+  },
+
+  _indiceCamaraActual: function () {
+    if (!this._camaraActual) return -1;
+    for (var i = 0; i < this._camaras.length; i++) {
+      if (this._camaras[i].id === this._camaraActual.id) return i;
+    }
+    return -1;
+  },
+
+  _esCamaraFrontal: function (camara, actual) {
+    var modo = String((actual && actual.facingMode) || '').toLowerCase();
+    if (modo === 'user') return true;
+    if (modo === 'environment') return false;
+    var texto = String((camara && camara.etiqueta) || '') + ' ' + String((actual && actual.etiqueta) || '');
+    texto = texto.toLowerCase();
+    if (/front|user|selfie|frontal|delantera/.test(texto)) return true;
+    if (/back|rear|environment|trasera|trasero|posterior/.test(texto)) return false;
+    return null;
+  },
+
+  _buscarCamaraTrasera: function () {
+    for (var i = 0; i < this._camaras.length; i++) {
+      var texto = String(this._camaras[i].etiqueta || '').toLowerCase();
+      if (/back|rear|environment|trasera|trasero|posterior/.test(texto)) return i;
+    }
+    return -1;
+  },
+
+  _actualizarBotonCamara: function () {
+    var btn = document.getElementById('sireiQrCambiar');
+    var ayuda = document.getElementById('sireiQrAyuda');
+    if (!btn) return;
+    if (this._camaras.length > 1) {
+      btn.style.display = 'inline-block';
+      var idx = this._indiceCamaraActual();
+      var nombre = (idx >= 0 && this._camaras[idx].etiqueta) ? this._camaras[idx].etiqueta : '';
+      btn.title = 'Cambiar cámara' + (nombre ? ': ' + nombre : '');
+      if (ayuda) ayuda.style.display = 'block';
+    } else {
+      btn.style.display = 'none';
+      if (ayuda) ayuda.style.display = 'none';
+    }
+  },
+
+  // Detecta las cámaras disponibles después de abrir la primera.
+  _detectarCamaras: async function () {
+    if (!this._activo) return;
+    this._cambiando = false;
+    var actual = this._leerCamaraActual();
+    this._camaraActual = actual;
+    var lista = await this._listarCamaras();
+    if (!this._activo) return;
+    this._camaras = lista;
+
+    var idx = this._indiceCamaraActual();
+    if (idx < 0 && actual && actual.id) {
+      this._camaras.push({ id: actual.id, etiqueta: actual.etiqueta || 'Cámara actual' });
+      idx = this._camaras.length - 1;
+    }
+
+    // Para los siguientes escaneos se intenta conservar la misma cámara.
+    if (actual && actual.id) {
+      if (!this._preferenciaGuardada) {
+        this._camaraPreferidaId = actual.id;
+      } else if (this._camaraPreferidaId && actual.id !== this._camaraPreferidaId) {
+        // La cámara guardada ya no está disponible: se actualiza sola.
+        this._camaraPreferidaId = actual.id;
+        try { localStorage.setItem('sireiCamaraPreferida', actual.id); } catch (e) {}
+      }
+    }
+    this._actualizarBotonCamara();
+
+    // Si abrió la delantera y existe una trasera, se cambia automáticamente.
+    // Si no se puede determinar (sin etiquetas), se reintenta en la próxima
+    // detección o el docente usa el botón "🔄 Cámara".
+    if (!this._autoCambioHecho && !this._preferenciaGuardada) {
+      var frontal = this._esCamaraFrontal(this._camaras[idx], actual);
+      if (frontal === true) {
+        this._autoCambioHecho = true;
+        var idxTrasera = this._buscarCamaraTrasera();
+        if (idxTrasera >= 0 && idxTrasera !== idx) {
+          this._cambiarCamaraA(idxTrasera, true);
+        }
+      } else if (frontal === false) {
+        this._autoCambioHecho = true;
+      }
+    }
+  },
+
+  _cambiarCamara: function () {
+    var self = this;
+    if (!this._activo || this._cambiando || this._iniciando) return;
+
+    if (this._camaras.length < 2) {
+      this._listarCamaras().then(function (lista) {
+        self._camaras = lista || [];
+        if (self._camaras.length < 2) {
+          SIREI.utils.mostrarToast('Este dispositivo no reporta más de una cámara.', 'warning');
+          self._actualizarBotonCamara();
+          return;
+        }
+        self._cambiarCamara();
+      });
+      return;
+    }
+
+    var idx = this._indiceCamaraActual();
+    var nuevo = (idx + 1) % this._camaras.length;
+    this._cambiarCamaraA(nuevo, false);
+  },
+
+  _cambiarCamaraA: async function (indice, automatico) {
+    if (!this._activo || this._cambiando) return;
+    if (indice < 0 || indice >= this._camaras.length) return;
+
+    var camara = this._camaras[indice];
+    this._cambiando = true;
+    this._procesando = true;
+    this._camaraLista = false;
+    this._estado('Cambiando cámara…', '#3b82f6');
+
+    var lector = this._instancia;
+    this._instancia = null;
+    if (lector) {
+      try { await lector.stop(); } catch (e) {}
+      try { lector.clear(); } catch (e) {}
+    }
+    this._liberarVideo(this._overlay);
+
+    this._camaraPreferidaId = camara.id || '';
+    this._preferenciaGuardada = true;
+    try {
+      if (camara.id) localStorage.setItem('sireiCamaraPreferida', camara.id);
+    } catch (e) {}
+
+    this._procesando = false;
+    this._iniciarCamara(0);
+
+    if (!automatico) {
+      SIREI.utils.mostrarToast('Cámara: ' + (camara.etiqueta || ('Cámara ' + (indice + 1))), 'warning');
+    }
   },
 
   _pausar: function () {
@@ -713,6 +946,9 @@ SIREI.qr = {
       self._camaraLista = false;
       self._procesando = false;
       self._pausado = false;
+      self._camaraActual = null;
+      self._camaras = [];
+      self._cambiando = false;
       self._onCerrar = null;
 
       if (overlay) overlay.style.display = 'none';
@@ -752,6 +988,16 @@ SIREI.qr = {
     this._camaraLista = false;
     this._ultimoCodigo = '';
     this._ultimoMs = 0;
+    this._camaras = [];
+    this._camaraActual = null;
+    this._autoCambioHecho = false;
+    this._cambiando = false;
+    try {
+      this._camaraPreferidaId = localStorage.getItem('sireiCamaraPreferida') || '';
+    } catch (e) {
+      this._camaraPreferidaId = '';
+    }
+    this._preferenciaGuardada = !!this._camaraPreferidaId;
 
     this._detener(true).then(function () {
       self._abriendo = true;
