@@ -13,7 +13,7 @@
 //  de CACHE (v1 -> v2). Así el navegador reemplaza la copia guardada.
 // ============================================================
 
-const CACHE = 'sirei-shell-v4';
+const CACHE = 'sirei-shell-v6';
 
 const SHELL = [
   './',
@@ -21,6 +21,7 @@ const SHELL = [
   'admin.html',
   'coordinador.html',
   'docente.html',
+  'prefecto.html',
   'manifest.json',
   'css/admin.css',
   'css/stylesindex.css',
@@ -46,6 +47,7 @@ const SHELL = [
   'js/pages/actitudes_docente.js',
   'js/pages/calificaciones_docente.js',
   'js/pages/resultados_docente.js',
+  'js/pages/prefecto.js',
   'icon-192.png',
   'icon-512.png',
   'icon-512-maskable.png'
