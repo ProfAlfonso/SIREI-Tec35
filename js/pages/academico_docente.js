@@ -23,8 +23,13 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
   let alumnosGrupo = [];
   let entregasExistentes = {};
 
-  // === Obtener alumnos del grupo ===
-  async function obtenerAlumnosGrupo() {
+  // === Obtener alumnos del grupo (con caché corta) ===
+  async function obtenerAlumnosGrupo(forzar) {
+    const clave = 'alumnos_' + idGrupo + '_' + (idSubgrupo || '');
+    if (!forzar) {
+      const cache = SIREI.cacheLocal.get(clave);
+      if (cache) return cache;
+    }
     const response = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -36,7 +41,11 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
       })
     });
     const data = await response.json();
-    if (data.success) return data.alumnos || [];
+    if (data.success) {
+      const alumnos = data.alumnos || [];
+      SIREI.cacheLocal.set(clave, alumnos, SIREI.TTL.ALUMNOS);
+      return alumnos;
+    }
     return [];
   }
 
@@ -107,28 +116,62 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
   }
 
   async function renderizar() {
-    // Cargar datos
-    try {
-      const resultados = await Promise.all([
-        obtenerAlumnosGrupo(),
-        obtenerEvidencias(),
-        obtenerEntregas()          // una sola consulta para todas las evidencias
-      ]);
-      alumnosGrupo = resultados[0] || [];
-      evidencias = resultados[1] || [];
+    let panelAcademico = null;
 
-      // Mapear entregas existentes por evidencia y alumno
-      entregasExistentes = {};
-      (resultados[2] || []).forEach(function (e) {
-        if (!entregasExistentes[e.idEvidencia]) entregasExistentes[e.idEvidencia] = {};
-        entregasExistentes[e.idEvidencia][e.curpAlumno] = e;
-      });
+    // 1) Intento con el endpoint combinado (una sola llamada).
+    if (!window._panelAcademicoNoDisponible) {
+      try {
+        const panel = await SIREI.api.panelAcademico(idGrupo, idAsignatura, idSubgrupo);
+        if (panel && panel.success === true && Array.isArray(panel.alumnos) && Array.isArray(panel.evidencias)) {
+          panelAcademico = panel;
+        } else if (panel && panel.success === false && /acci[oó]n no v[aá]lida/i.test(String(panel.message || ''))) {
+          window._panelAcademicoNoDisponible = true;
+        }
+      } catch (e) {
+        console.warn('Panel académico no disponible; se usará el modo de respaldo.', e);
+      }
+    }
+
+    // 2) Cargar datos (panel combinado o llamadas separadas de respaldo).
+    try {
+      if (panelAcademico) {
+        alumnosGrupo = panelAcademico.alumnos || [];
+        evidencias = (panelAcademico.evidencias || []).filter(function (ev) {
+          if (!idAsignatura) return true;
+          return !ev.idAsignatura || String(ev.idAsignatura) === String(idAsignatura);
+        });
+        entregasExistentes = {};
+        (panelAcademico.entregas || []).forEach(function (e) {
+          if (!entregasExistentes[e.idEvidencia]) entregasExistentes[e.idEvidencia] = {};
+          entregasExistentes[e.idEvidencia][e.curpAlumno] = e;
+        });
+        if (alumnosGrupo.length) {
+          SIREI.cacheLocal.set('alumnos_' + idGrupo + '_' + (idSubgrupo || ''), alumnosGrupo, SIREI.TTL.ALUMNOS);
+        }
+      } else {
+        const resultados = await Promise.all([
+          obtenerAlumnosGrupo(),
+          obtenerEvidencias(),
+          obtenerEntregas()          // una sola consulta para todas las evidencias
+        ]);
+        alumnosGrupo = resultados[0] || [];
+        evidencias = resultados[1] || [];
+
+        // Mapear entregas existentes por evidencia y alumno
+        entregasExistentes = {};
+        (resultados[2] || []).forEach(function (e) {
+          if (!entregasExistentes[e.idEvidencia]) entregasExistentes[e.idEvidencia] = {};
+          entregasExistentes[e.idEvidencia][e.curpAlumno] = e;
+        });
+      }
     } catch (e) {
       console.error('Error al cargar datos:', e);
     }
 
-    // Si la pestaña se cerró mientras cargaba, no se pinta (evita ids duplicados)
+    // Si la pestaña se cerró o se suspendió mientras cargaba, no se pinta
+    // (evita ids duplicados con la pestaña Evidencias).
     if (container.isConnected === false) return;
+    if (container.dataset && container.dataset.suspendido === '1') return;
 
     container.innerHTML = `
       <div class="academico-docente">
@@ -718,12 +761,18 @@ window.cargarAcademicoDocente = async function(container, idDocente, idGrupo, id
 
     (async () => {
       try {
-        const res = await fetch(API_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ accion: 'obtenerPeriodos', token: token })
-        });
-        const data = await res.json();
+        let data = SIREI.cacheLocal.get('periodos');
+        if (!data) {
+          const res = await fetch(API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ accion: 'obtenerPeriodos', token: token })
+          });
+          data = await res.json();
+          if (data && data.success) {
+            SIREI.cacheLocal.set('periodos', data, SIREI.TTL.PERIODOS);
+          }
+        }
         const selectP = document.getElementById('selectPeriodoEvidencia');
         if (data.success && data.periodos && data.periodos.length) {
           const ahora = new Date();
