@@ -136,6 +136,7 @@ async function mostrarFormulario(container, usuarioExistente) {
             <option value="admin" ${datos.rol === 'admin' ? 'selected' : ''}>Administrador</option>
             <option value="coordinador" ${datos.rol === 'coordinador' ? 'selected' : ''}>Coordinador</option>
             <option value="docente" ${datos.rol === 'docente' ? 'selected' : ''}>Docente</option>
+            <option value="prefecto" ${datos.rol === 'prefecto' ? 'selected' : ''}>Prefecto</option>
           </select>
         </div>
         <div class="form-buttons">
