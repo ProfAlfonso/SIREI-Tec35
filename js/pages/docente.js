@@ -1,10 +1,13 @@
 // ============================================================
 //  SIREI - Panel del Docente
-//  Versión 3.3 - CORREGIDA (modal de salidas responsive + QR con debounce)
-//  Cambios:
-//   - Modal de salidas ahora ocupa toda la pantalla en móviles y es scrollable.
-//   - Los lectores QR (asistencia y salidas) solo procesan una lectura cada 1 segundo.
-//   - Se agregó un botón para cerrar la cámara en cada lector QR.
+//  Versión 3.4 - Optimización de tiempos de respuesta
+//  Cambios recientes:
+//   - Carga inicial con un solo endpoint combinado (obtenerPanelDocente).
+//   - Respaldo automático si el backend todavía no tiene ese endpoint.
+//   - Catálogos en caché local con vencimiento (grupos, asignaturas, alumnos).
+//   - Pestañas persistentes: "Mi Clase" y "Resultados" no se recargan al volver.
+//   - Botón "Actualizar" en la cabecera de la clase.
+//   - Telemetría de peticiones (activar con ?debug=1).
 // ============================================================
 
 // ============================================================
@@ -56,6 +59,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await cargarTabla('inicio');
 
   document.getElementById('logoutBtn').addEventListener('click', () => {
+    try { SIREI.cacheLocal.limpiar(); } catch (e) {}
     sessionStorage.clear();
     window.location.replace('index.html');
   });
@@ -162,7 +166,8 @@ function mostrarDialogoSalirSirei() {
 //  SECCIÓN 1.5: NAVEGACIÓN DE PESTAÑAS Y CARGA DE TABLAS
 // ============================================================
 
-async function cargarTabla(tab) {
+async function cargarTabla(tab, opciones) {
+  opciones = opciones || {};
   const mainContainer = document.getElementById('tabContent');
   if (!mainContainer) return;
 
@@ -173,22 +178,97 @@ async function cargarTabla(tab) {
     mainContainer.appendChild(tabContainer);
   }
 
-  // Solo se conserva el contenido de la pestaña visible; así no quedan
-  // dos copias del mismo módulo con los mismos ids (evidencias, etc.).
+  // Se ocultan las demás pestañas, pero NO se destruyen "Mi Clase" ni
+  // "Resultados": al regresar se muestran al instante (pestañas persistentes).
   Array.from(mainContainer.children).forEach(function (child) {
-    if (child === tabContainer) return;
-    child.style.display = 'none';
-    child.innerHTML = '';
+    if (child !== tabContainer) child.style.display = 'none';
   });
-
   tabContainer.style.display = 'block';
 
   if (tab === 'inicio') {
+    // Evidencias usa los mismos ids que el módulo Académico: se limpia.
+    const evidencias = document.getElementById('tab-container-evidencias');
+    if (evidencias) {
+      evidencias.innerHTML = '';
+      delete evidencias.dataset.cargado;
+    }
+    reactivarModuloAcademicoInicio();
+    if (opciones.limpiarDerivadas) invalidarPestanasDerivadas();
+
+    if (!opciones.forzar && tabContainer.dataset.cargado === '1' && tabContainer.innerHTML.trim() !== '') {
+      rehidratarPanelActivoInicio();
+      return;
+    }
+    delete tabContainer.dataset.cargado;
     await cargarInicio(tabContainer);
-  } else if (tab === 'resultados') {
-    await cargarResultadosTab(tabContainer);
-  } else if (tab === 'evidencias') {
+    tabContainer.dataset.cargado = '1';
+    return;
+  }
+
+  // Pestañas distintas de "Mi Clase": se libera Evidencias para no dejar
+  // dos copias del mismo módulo con ids repetidos.
+  const evidenciasPrevio = document.getElementById('tab-container-evidencias');
+  if (tab !== 'evidencias' && evidenciasPrevio) {
+    evidenciasPrevio.innerHTML = '';
+    delete evidenciasPrevio.dataset.cargado;
+  }
+
+  if (tab === 'evidencias') {
+    // El módulo Académico del panel de clase comparte ids con Evidencias.
+    liberarModuloAcademicoInicio();
+    tabContainer.innerHTML = '';
     await cargarEvidenciasTab(tabContainer);
+    return;
+  }
+
+  if (tab === 'resultados') {
+    if (!opciones.forzar && tabContainer.dataset.cargado === '1' && tabContainer.innerHTML.trim() !== '') {
+      return;
+    }
+    delete tabContainer.dataset.cargado;
+    await cargarResultadosTab(tabContainer);
+    tabContainer.dataset.cargado = '1';
+  }
+}
+
+// Al iniciar o finalizar una clase, Resultados/Evidencias quedan obsoletos.
+function invalidarPestanasDerivadas() {
+  ['resultados', 'evidencias'].forEach(function (tab) {
+    const cont = document.getElementById('tab-container-' + tab);
+    if (cont) {
+      cont.innerHTML = '';
+      delete cont.dataset.cargado;
+    }
+  });
+}
+
+// El panel de clase contiene el módulo Académico, que usa ids globales.
+// Se "suspende" mientras se muestra la pestaña Evidencias.
+function liberarModuloAcademicoInicio() {
+  const cont = document.getElementById('academicoDocenteContainer');
+  if (!cont) return;
+  cont.dataset.suspendido = '1';
+  cont.innerHTML = '';
+  delete cont.dataset.cargado;
+}
+
+function reactivarModuloAcademicoInicio() {
+  const cont = document.getElementById('academicoDocenteContainer');
+  if (cont) delete cont.dataset.suspendido;
+}
+
+// Si el docente estaba en la pestaña Académico/Actitudinal y esa sección
+// se descargó, se vuelve a cargar al regresar a Mi Clase.
+function rehidratarPanelActivoInicio() {
+  const activo = document.querySelector('#tab-container-inicio .btn-panel.activo');
+  if (!activo) return;
+  const panel = activo.dataset.panel;
+  if (panel === 'academico') {
+    const cont = document.getElementById('academicoDocenteContainer');
+    if (cont && !cont.dataset.cargado) activo.click();
+  } else if (panel === 'actitudinal') {
+    const cont = document.getElementById('actitudesDocenteContainer');
+    if (cont && !cont.dataset.cargado) activo.click();
   }
 }
 
@@ -221,13 +301,19 @@ async function cargarEvidenciasTab(container) {
 
 async function cargarResultadosTab(container) {
   if (typeof window.cargarResultadosDocente === 'undefined') {
-    const script = document.createElement('script');
-    script.src = 'js/pages/resultados_docente.js?v=1';
-    script.onload = () => window.cargarResultadosDocente(container);
-    script.onerror = () => { container.innerHTML = '<div class="error">Error al cargar Resultados.</div>'; };
-    document.head.appendChild(script);
-  } else {
-    window.cargarResultadosDocente(container);
+    await new Promise(function (resolve, reject) {
+      const script = document.createElement('script');
+      script.src = 'js/pages/resultados_docente.js?v=2';
+      script.onload = resolve;
+      script.onerror = function () {
+        container.innerHTML = '<div class="error">Error al cargar Resultados.</div>';
+        reject(new Error('No se pudo cargar Resultados.'));
+      };
+      document.head.appendChild(script);
+    }).catch(function () {});
+  }
+  if (typeof window.cargarResultadosDocente === 'function') {
+    await window.cargarResultadosDocente(container);
   }
 }
 
@@ -235,10 +321,18 @@ async function cargarResultadosTab(container) {
 //  SECCIÓN 2: FUNCIONES AUXILIARES (OBTENER DATOS)
 // ============================================================
 
-async function obtenerGrupos() {
+async function obtenerGrupos(forzar) {
   const cacheKey = 'coordinador_grupos';
-  if (window._sireiCache && window._sireiCache[cacheKey]) {
-    return window._sireiCache[cacheKey];
+  if (!forzar) {
+    const local = SIREI.cacheLocal.get('grupos');
+    if (local) {
+      if (!window._sireiCache) window._sireiCache = {};
+      window._sireiCache[cacheKey] = local;
+      return local;
+    }
+    if (window._sireiCache && window._sireiCache[cacheKey]) {
+      return window._sireiCache[cacheKey];
+    }
   }
   const response = await fetch(API_URL, {
     method: 'POST',
@@ -250,17 +344,27 @@ async function obtenerGrupos() {
   });
   const data = await response.json();
   if (data.success) {
+    const grupos = data.grupos || [];
     if (!window._sireiCache) window._sireiCache = {};
-    window._sireiCache[cacheKey] = data.grupos || [];
-    return window._sireiCache[cacheKey];
+    window._sireiCache[cacheKey] = grupos;
+    SIREI.cacheLocal.set('grupos', grupos, SIREI.TTL.CATALOGOS);
+    return grupos;
   }
   return [];
 }
 
-async function obtenerAsignaturas() {
+async function obtenerAsignaturas(forzar) {
   const cacheKey = 'coordinador_asignaturas';
-  if (window._sireiCache && window._sireiCache[cacheKey]) {
-    return window._sireiCache[cacheKey];
+  if (!forzar) {
+    const local = SIREI.cacheLocal.get('asignaturas');
+    if (local) {
+      if (!window._sireiCache) window._sireiCache = {};
+      window._sireiCache[cacheKey] = local;
+      return local;
+    }
+    if (window._sireiCache && window._sireiCache[cacheKey]) {
+      return window._sireiCache[cacheKey];
+    }
   }
   const response = await fetch(API_URL, {
     method: 'POST',
@@ -272,11 +376,36 @@ async function obtenerAsignaturas() {
   });
   const data = await response.json();
   if (data.success) {
+    const asignaturas = data.asignaturas || [];
     if (!window._sireiCache) window._sireiCache = {};
-    window._sireiCache[cacheKey] = data.asignaturas || [];
-    return window._sireiCache[cacheKey];
+    window._sireiCache[cacheKey] = asignaturas;
+    SIREI.cacheLocal.set('asignaturas', asignaturas, SIREI.TTL.CATALOGOS);
+    return asignaturas;
   }
   return [];
+}
+
+// Resuelve el id del docente una sola vez por sesión.
+async function obtenerIdDocente(nombreDocente, forzar) {
+  if (!forzar) {
+    const guardado = sessionStorage.getItem('sirei_id_docente');
+    if (guardado) return { success: true, idDocente: guardado, desdeCache: true };
+  }
+  const response = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      accion: 'obtenerIdDocentePorNombre',
+      token: sessionStorage.getItem('sirei_token'),
+      nombre: nombreDocente
+    })
+  });
+  const data = await response.json();
+  if (data && data.success && data.idDocente) {
+    sessionStorage.setItem('sirei_id_docente', String(data.idDocente));
+    window._sireiIdDocente = data.idDocente;
+  }
+  return data;
 }
 
 // ============================================================
@@ -284,8 +413,10 @@ async function obtenerAsignaturas() {
 // ============================================================
 
 async function cargarInicio(containerParam) {
-  const container = containerParam || document.getElementById('tabContent');
+  const container = containerParam || document.getElementById('tab-container-inicio') || document.getElementById('tabContent');
   if (!container) return;
+
+  const t0 = (window.performance && performance.now) ? performance.now() : Date.now();
 
   // Mostrar UI inmediatamente con estado de carga
   container.innerHTML = `
@@ -296,58 +427,100 @@ async function cargarInicio(containerParam) {
 
   const nombreDocente = sessionStorage.getItem('sirei_nombre') || sessionStorage.getItem('sirei_user');
   const token = sessionStorage.getItem('sirei_token');
-
-  // ---- Paralelizar peticiones independientes: idDocente, grupos (caché), asignaturas (caché) ----
-  let idDocente = null;
-  let asignaciones = [], grupos = [], asignaturas = [], claseActiva = null;
-
-  const resultados = await Promise.all([
-    fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        accion: 'obtenerIdDocentePorNombre',
-        token: token,
-        nombre: nombreDocente
-      })
-    }).then(r => r.json()).catch(() => ({ success: false })),
-    obtenerGrupos().catch(() => []),
-    obtenerAsignaturas().catch(() => [])
-  ]);
-
-  const dataId = resultados[0];
-  if (dataId && dataId.success === false && /sesi[oó]n/i.test(String(dataId.message || ''))) {
-    // La sesión guardada ya no es válida: se limpia y se manda al login.
-    sessionStorage.clear();
+  if (!token) {
     window.location.replace('index.html');
     return;
   }
-  if (dataId.success && dataId.idDocente) {
-    idDocente = dataId.idDocente;
-    window._sireiIdDocente = idDocente;
-  } else {
-    container.innerHTML = `<div class="card"><div class="error">No se encontró tu perfil de docente. Contacta al administrador.</div></div>`;
-    return;
+
+  // 1) Intento con el endpoint combinado: una sola llamada para toda la pantalla.
+  if (!window._panelDocenteNoDisponible) {
+    try {
+      const panel = await SIREI.api.panelDocente(nombreDocente);
+      if (panel && panel.success === true) {
+        await renderizarInicioConPanel(container, panel, token);
+        if (SIREI.telemetria) {
+          SIREI.telemetria.evento('cargarInicio (panel)', Math.round(((window.performance && performance.now) ? performance.now() : Date.now()) - t0));
+        }
+        return;
+      }
+      const mensajePanel = String((panel && panel.message) || '');
+      if (/sesi[oó]n/i.test(mensajePanel)) {
+        sessionStorage.clear();
+        window.location.replace('index.html');
+        return;
+      }
+      if (/acci[oó]n no v[aá]lida/i.test(mensajePanel)) {
+        // El backend todavía no tiene el endpoint: no se vuelve a intentar en esta sesión.
+        window._panelDocenteNoDisponible = true;
+      }
+    } catch (e) {
+      console.warn('Panel docente no disponible; se usará el modo de respaldo.', e);
+    }
   }
 
-  grupos = resultados[1] || [];
-  asignaturas = resultados[2] || [];
+  // 2) Respaldo compatible con el backend anterior (varias llamadas).
+  await cargarInicioRespaldo(container, nombreDocente, token);
+  if (SIREI.telemetria) {
+    SIREI.telemetria.evento('cargarInicio (respaldo)', Math.round(((window.performance && performance.now) ? performance.now() : Date.now()) - t0));
+  }
+}
 
-  // ---- Finalizar clases vencidas (olvidadas) antes de leer la clase activa ----
-  try {
-    await fetch(API_URL, {
+async function renderizarInicioConPanel(container, panel, token) {
+  const idDocente = panel.idDocente;
+  if (!idDocente) throw new Error('El panel no devolvió el perfil del docente.');
+
+  window._sireiIdDocente = idDocente;
+  try { sessionStorage.setItem('sirei_id_docente', String(idDocente)); } catch (e) {}
+
+  const grupos = panel.grupos || [];
+  const asignaturas = panel.asignaturas || [];
+  if (grupos.length) SIREI.cacheLocal.set('grupos', grupos, SIREI.TTL.CATALOGOS);
+  if (asignaturas.length) SIREI.cacheLocal.set('asignaturas', asignaturas, SIREI.TTL.CATALOGOS);
+
+  const claseActiva = panel.claseActiva || null;
+  window._sireiClaseActiva = claseActiva;
+
+  if (claseActiva) {
+    await mostrarPanelesClaseActiva(container, idDocente, claseActiva, grupos, asignaturas, token, panel);
+  } else {
+    mostrarOpcionesInicio(container, panel.asignaciones || [], grupos, asignaturas, idDocente, token);
+  }
+}
+
+async function cargarInicioRespaldo(container, nombreDocente, token) {
+  let idDocente = window._sireiIdDocente || sessionStorage.getItem('sirei_id_docente');
+
+  if (!idDocente) {
+    const dataId = await obtenerIdDocente(nombreDocente);
+    if (dataId && dataId.success === false && /sesi[oó]n/i.test(String(dataId.message || ''))) {
+      sessionStorage.clear();
+      window.location.replace('index.html');
+      return;
+    }
+    if (!dataId || !dataId.idDocente) {
+      container.innerHTML = `<div class="card"><div class="error">No se encontró tu perfil de docente. Contacta al administrador.</div></div>`;
+      return;
+    }
+    idDocente = dataId.idDocente;
+  }
+
+  // Catálogos (con caché), finalización de clases vencidas y datos del docente en paralelo.
+  const resultados = await Promise.all([
+    obtenerGrupos().catch(function () { return []; }),
+    obtenerAsignaturas().catch(function () { return []; }),
+    fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         accion: 'finalizarClasesVencidas',
         token: token
       })
-    }).then(r => r.json());
-  } catch (e) {
-    console.error('No se pudo verificar clases vencidas:', e);
-  }
+    }).then(function (r) { return r.json(); }).catch(function () { return { success: false }; })
+  ]);
 
-  // ---- Paralelizar asignaciones y clase activa (dependen de idDocente) ----
+  const grupos = resultados[0] || [];
+  const asignaturas = resultados[1] || [];
+
   const resultados2 = await Promise.all([
     fetch(API_URL, {
       method: 'POST',
@@ -357,7 +530,7 @@ async function cargarInicio(containerParam) {
         token: token,
         idDocente: idDocente
       })
-    }).then(r => r.json()).catch(() => ({ success: false })),
+    }).then(function (r) { return r.json(); }).catch(function () { return { success: false }; }),
     fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -366,11 +539,11 @@ async function cargarInicio(containerParam) {
         token: token,
         idDocente: idDocente
       })
-    }).then(r => r.json()).catch(() => ({ success: false }))
+    }).then(function (r) { return r.json(); }).catch(function () { return { success: false }; })
   ]);
 
-  if (resultados2[0] && resultados2[0].success) asignaciones = resultados2[0].asignaciones || [];
-  if (resultados2[1] && resultados2[1].success) claseActiva = resultados2[1].claseActiva;
+  const asignaciones = (resultados2[0] && resultados2[0].success) ? (resultados2[0].asignaciones || []) : [];
+  const claseActiva = (resultados2[1] && resultados2[1].success) ? resultados2[1].claseActiva : null;
   window._sireiClaseActiva = claseActiva || null;
 
   if (claseActiva) {
@@ -400,46 +573,53 @@ function formatoNombreAlumno(a, orden) {
   return t || a.nombreCompleto;
 }
 
-async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grupos, asignaturas, token) {
-  const grupo = grupos.find(g => g.id == claseActiva.idGrupo);
-  const asignatura = asignaturas.find(a => a.id === claseActiva.idAsignatura);
+async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grupos, asignaturas, token, datosPrecargados) {
+  const pre = datosPrecargados || null;
+  const grupo = (pre && pre.grupo) ? pre.grupo : grupos.find(g => g.id == claseActiva.idGrupo);
+  const asignatura = (pre && pre.asignatura) ? pre.asignatura : asignaturas.find(a => a.id === claseActiva.idAsignatura);
   const inicio = claseActiva.inicio ? new Date(claseActiva.inicio).toLocaleString('es-ES') : new Date().toLocaleString('es-ES');
 
-  // ---- Obtener alumnos, asistencias y salidas en paralelo ----
+  // ---- Alumnos, asistencias y salidas: vienen en el panel combinado ----
   let alumnosGrupo = [], asistencias = [], salidas = [];
-  const datosParalelos = await Promise.all([
-    fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        accion: 'obtenerAlumnosPorGrupo',
-        token: token,
-        idGrupo: claseActiva.idGrupo,
-        idSubgrupo: claseActiva.idSubgrupo || ''
-      })
-    }).then(r => r.json()).catch(() => ({ success: false })),
-    fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        accion: 'obtenerAsistenciasClase',
-        token: token,
-        idClase: claseActiva.idClase
-      })
-    }).then(r => r.json()).catch(() => ({ success: false })),
-    fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        accion: 'obtenerSalidasClase',
-        token: token,
-        idClase: claseActiva.idClase
-      })
-    }).then(r => r.json()).catch(() => ({ success: false }))
-  ]);
-  if (datosParalelos[0].success) alumnosGrupo = datosParalelos[0].alumnos || [];
-  if (datosParalelos[1].success) asistencias = datosParalelos[1].asistencias || [];
-  if (datosParalelos[2].success) salidas = datosParalelos[2].salidas || [];
+  if (pre) {
+    alumnosGrupo = pre.alumnos || [];
+    asistencias = pre.asistencias || [];
+    salidas = pre.salidas || [];
+  } else {
+    const datosParalelos = await Promise.all([
+      fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          accion: 'obtenerAlumnosPorGrupo',
+          token: token,
+          idGrupo: claseActiva.idGrupo,
+          idSubgrupo: claseActiva.idSubgrupo || ''
+        })
+      }).then(r => r.json()).catch(() => ({ success: false })),
+      fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          accion: 'obtenerAsistenciasClase',
+          token: token,
+          idClase: claseActiva.idClase
+        })
+      }).then(r => r.json()).catch(() => ({ success: false })),
+      fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          accion: 'obtenerSalidasClase',
+          token: token,
+          idClase: claseActiva.idClase
+        })
+      }).then(r => r.json()).catch(() => ({ success: false }))
+    ]);
+    if (datosParalelos[0].success) alumnosGrupo = datosParalelos[0].alumnos || [];
+    if (datosParalelos[1].success) asistencias = datosParalelos[1].asistencias || [];
+    if (datosParalelos[2].success) salidas = datosParalelos[2].salidas || [];
+  }
 
   // Ordenar por apellido paterno por defecto (estándar en listas escolares de México)
   alumnosGrupo.sort((a, b) => {
@@ -466,7 +646,10 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
         <p><strong>Asignatura:</strong> ${asignatura ? SIREI.utils.escapeHtml(asignatura.nombre) : 'Desconocida'}</p>
         <p><strong>Periodo:</strong> ${claseActiva.periodo || 'No asignado'}</p>
         <p><strong>Inicio:</strong> ${inicio}</p>
-        <button id="btnFinalizarClase" class="btn btn-danger" style="margin-top:8px; width:100%;">Finalizar clase</button>
+        <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+          <button id="btnActualizarClase" class="btn btn-secondary" style="flex:1; min-width:130px;">⟳ Actualizar</button>
+          <button id="btnFinalizarClase" class="btn btn-danger" style="flex:1; min-width:130px;">Finalizar clase</button>
+        </div>
       </div>
 
       <!-- Navegación de pestañas -->
@@ -658,13 +841,14 @@ async function mostrarPanelesClaseActiva(container, idDocente, claseActiva, grup
   function precargarAcademico() {
     const container = document.getElementById('academicoDocenteContainer');
     if (!container || container.dataset.cargado) return;
+    if (container.dataset.suspendido === '1') return;
     container.dataset.cargado = 'true';
     if (container.isConnected === false) return;
     if (typeof window.cargarAcademicoDocente === 'undefined') {
       const script = document.createElement('script');
       script.src = 'js/pages/academico_docente.js';
       script.onload = () => {
-        if (container.isConnected === false) return;
+        if (container.isConnected === false || container.dataset.suspendido === '1') return;
         window._precargaAcademico = window.cargarAcademicoDocente(container, idDocente, claseActiva.idGrupo, claseActiva.idAsignatura, claseActiva.periodo, token, claseActiva.idSubgrupo);
       };
       script.onerror = () => {
@@ -1963,6 +2147,14 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
   // El modal arranca siempre en la Pantalla 1
   msalIrA('1');
 
+  // ---- 8.5 ACTUALIZAR PANEL (sin recargar toda la aplicación) ----
+  const btnActualizarClase = document.getElementById('btnActualizarClase');
+  if (btnActualizarClase) {
+    btnActualizarClase.addEventListener('click', function () {
+      cargarTabla('inicio', { forzar: true });
+    });
+  }
+
   // ---- 9. FINALIZAR CLASE (optimizado: el backend marca ausentes en lote) ----
   document.getElementById('btnFinalizarClase').addEventListener('click', async () => {
     if (!SIREI.utils.confirmar('¿Finalizar clase? Los alumnos pendientes se marcarán como ausentes.')) return;
@@ -1990,7 +2182,9 @@ function configurarEventosPaneles(container, idDocente, claseActiva, token, alum
       const result = await response.json();
       if (result.success) {
         SIREI.utils.mostrarToast('Clase finalizada.');
-        setTimeout(() => cargarTabla('inicio'), 500);
+        setTimeout(function () {
+          cargarTabla('inicio', { forzar: true, limpiarDerivadas: true });
+        }, 500);
       } else {
         SIREI.utils.mostrarToast(result.message, 'error');
         btn.disabled = false;
@@ -2113,7 +2307,9 @@ function mostrarOpcionesInicio(container, asignaciones, grupos, asignaturas, idD
         const result = await response.json();
         if (result.success) {
           SIREI.utils.mostrarToast('Clase iniciada.');
-          setTimeout(() => cargarTabla('inicio'), 500);
+          setTimeout(function () {
+            cargarTabla('inicio', { forzar: true, limpiarDerivadas: true });
+          }, 500);
         } else {
           SIREI.utils.mostrarToast(result.message, 'error');
           btnIniciar.disabled = false;
