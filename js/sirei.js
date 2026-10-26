@@ -30,6 +30,294 @@ SIREI.cache = {
   }
 };
 
+// ========== 2. CACHÉ LOCAL CON VENCIMIENTO ==========
+// Guarda catálogos (grupos, asignaturas, alumnos, periodos) en localStorage
+// para no volver a pedirlos en cada carga de pantalla.
+SIREI.TTL = {
+  CATALOGOS: 10 * 60 * 1000,   // grupos y asignaturas: 10 minutos
+  ALUMNOS: 5 * 60 * 1000,      // alumnos por grupo: 5 minutos
+  PERIODOS: 10 * 60 * 1000      // periodos: 10 minutos
+};
+
+SIREI.cacheLocal = {
+  PREFIJO: 'sirei_cache_v1_',
+  _mem: {},
+
+  _clave: function (clave) { return this.PREFIJO + clave; },
+
+  get: function (clave) {
+    var k = this._clave(clave);
+    var ahora = Date.now();
+    var enMemoria = this._mem[k];
+    if (enMemoria && enMemoria.exp > ahora) return enMemoria.valor;
+    try {
+      var crudo = localStorage.getItem(k);
+      if (!crudo) return null;
+      var obj = JSON.parse(crudo);
+      if (!obj || !obj.exp || obj.exp <= ahora) {
+        try { localStorage.removeItem(k); } catch (e) {}
+        delete this._mem[k];
+        return null;
+      }
+      this._mem[k] = obj;
+      return obj.valor;
+    } catch (e) {
+      return null;
+    }
+  },
+
+  set: function (clave, valor, ttlMs) {
+    var k = this._clave(clave);
+    var obj = { valor: valor, exp: Date.now() + (ttlMs || SIREI.TTL.CATALOGOS) };
+    this._mem[k] = obj;
+    try { localStorage.setItem(k, JSON.stringify(obj)); } catch (e) {}
+  },
+
+  borrar: function (clave) {
+    var k = this._clave(clave);
+    delete this._mem[k];
+    try { localStorage.removeItem(k); } catch (e) {}
+  },
+
+  limpiar: function () {
+    this._mem = {};
+    try {
+      var prefijo = this.PREFIJO;
+      Object.keys(localStorage).forEach(function (k) {
+        if (k.indexOf(prefijo) === 0) localStorage.removeItem(k);
+      });
+    } catch (e) {}
+  }
+};
+
+// ========== 3. TELEMETRÍA DE PETICIONES ==========
+// Mide automáticamente cada fetch (acción, duración y estado).
+// - Con ?debug=1 en la URL (o localStorage.sirei_debug = '1') muestra un panel.
+// - Sin debug, los datos quedan disponibles en consola:
+//     SIREI.telemetria.reporte()
+SIREI.telemetria = {
+  MAX: 120,
+  llamadas: [],
+  eventos: [],
+  _instalado: false,
+  _debug: false,
+  _fetchOriginal: null,
+  _panel: null,
+  _btn: null,
+
+  instalar: function () {
+    if (this._instalado) return;
+    if (typeof window === 'undefined' || typeof window.fetch !== 'function') return;
+    this._instalado = true;
+    this._debug = this._detectarDebug();
+    var self = this;
+    this._fetchOriginal = window.fetch.bind(window);
+    window.fetch = function (recurso, opciones) {
+      var t0 = self._ahora();
+      var accion = self._accionDe(opciones);
+      var promesa = self._fetchOriginal(recurso, opciones);
+      promesa.then(function (respuesta) {
+        try { self._registrar(accion, self._ahora() - t0, true, respuesta && respuesta.status); } catch (e) {}
+      }, function () {
+        try { self._registrar(accion, self._ahora() - t0, false, 0); } catch (e) {}
+      });
+      return promesa;
+    };
+
+    if (this._debug) {
+      if (document.body) this._montar();
+      else document.addEventListener('DOMContentLoaded', function () { self._montar(); });
+      window.addEventListener('load', function () {
+        self.evento('carga de página', Math.round(self._ahora()));
+        setTimeout(function () { self._actualizarPanel(); }, 1200);
+      });
+    }
+  },
+
+  _detectarDebug: function () {
+    try {
+      var params = new URLSearchParams(window.location.search);
+      if (params.get('debug') === '1') {
+        try { localStorage.setItem('sirei_debug', '1'); } catch (e) {}
+        return true;
+      }
+      return localStorage.getItem('sirei_debug') === '1';
+    } catch (e) { return false; }
+  },
+
+  _ahora: function () {
+    try { return (window.performance && performance.now) ? performance.now() : Date.now(); }
+    catch (e) { return Date.now(); }
+  },
+
+  _accionDe: function (opciones) {
+    try {
+      if (!opciones || !opciones.body) return 'GET';
+      var body = opciones.body;
+      if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) {
+        return body.get('accion') || 'desconocida';
+      }
+      if (typeof body === 'string') {
+        try { return new URLSearchParams(body).get('accion') || 'desconocida'; } catch (e) {}
+      }
+      return 'desconocida';
+    } catch (e) { return 'desconocida'; }
+  },
+
+  _registrar: function (accion, ms, ok, status) {
+    var redondeado = Math.max(0, Math.round(ms));
+    this.llamadas.push({
+      accion: accion,
+      ms: redondeado,
+      ok: ok,
+      status: status || 0,
+      hora: new Date().toLocaleTimeString('es-MX')
+    });
+    if (this.llamadas.length > this.MAX) this.llamadas.shift();
+    if (this._debug) this._actualizarPanel();
+  },
+
+  evento: function (nombre, ms) {
+    this.eventos.push({ nombre: nombre, ms: Math.max(0, Math.round(ms || 0)), hora: new Date().toLocaleTimeString('es-MX') });
+    if (this.eventos.length > 40) this.eventos.shift();
+    if (this._debug) this._actualizarPanel();
+  },
+
+  // Resumen agrupado por acción, ordenado por tiempo total.
+  resumen: function () {
+    var mapa = {};
+    this.llamadas.forEach(function (llamada) {
+      var clave = llamada.accion;
+      if (!mapa[clave]) mapa[clave] = { accion: clave, llamadas: 0, totalMs: 0, maxMs: 0, errores: 0 };
+      mapa[clave].llamadas++;
+      mapa[clave].totalMs += llamada.ms;
+      mapa[clave].maxMs = Math.max(mapa[clave].maxMs, llamada.ms);
+      if (!llamada.ok) mapa[clave].errores++;
+    });
+    var lista = Object.keys(mapa).map(function (k) {
+      var item = mapa[k];
+      item.promedioMs = Math.round(item.totalMs / item.llamadas);
+      return item;
+    });
+    lista.sort(function (a, b) { return b.totalMs - a.totalMs; });
+    return lista;
+  },
+
+  totales: function () {
+    var total = 0;
+    var tiempo = 0;
+    var errores = 0;
+    this.llamadas.forEach(function (l) {
+      total++;
+      tiempo += l.ms;
+      if (!l.ok) errores++;
+    });
+    return { llamadas: total, tiempoMs: Math.round(tiempo), errores: errores };
+  },
+
+  reporte: function () {
+    var resumen = this.resumen();
+    var totales = this.totales();
+    console.groupCollapsed('[SIREI] Telemetría: ' + totales.llamadas + ' llamadas · ' + totales.tiempoMs + ' ms');
+    console.table(resumen);
+    console.table(this.llamadas.slice(-20));
+    if (this.eventos.length) console.table(this.eventos);
+    console.groupEnd();
+    return { totales: totales, resumen: resumen, llamadas: this.llamadas, eventos: this.eventos };
+  },
+
+  limpiar: function () {
+    this.llamadas = [];
+    this.eventos = [];
+    this._actualizarPanel();
+  },
+
+  _montar: function () {
+    if (this._panel || !document.body) return;
+    var self = this;
+    var boton = document.createElement('button');
+    boton.type = 'button';
+    boton.id = 'sireiTelemetriaBtn';
+    boton.title = 'Ver tiempos de las peticiones';
+    boton.textContent = '⏱';
+    boton.style.cssText = 'position:fixed; left:12px; bottom:56px; z-index:2147482001; width:44px; height:44px; border-radius:50%; border:none; background:#0f172a; color:#fff; font-size:1.2rem; font-weight:700; cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,.3);';
+    boton.addEventListener('click', function () { self._alternarPanel(); });
+    document.body.appendChild(boton);
+    this._btn = boton;
+
+    var panel = document.createElement('div');
+    panel.id = 'sireiTelemetriaPanel';
+    panel.style.cssText = 'display:none; position:fixed; left:12px; bottom:108px; z-index:2147482002; width:min(420px, calc(100vw - 24px)); max-height:60vh; overflow:auto; background:#0b1220; color:#e5e7eb; border-radius:12px; padding:12px; box-shadow:0 12px 40px rgba(0,0,0,.45); font-family:Consolas, monospace; font-size:0.78rem;';
+    panel.innerHTML = '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;">' +
+      '<strong style="font-size:0.85rem;">⏱ Telemetría SIREI</strong>' +
+      '<span style="display:flex; gap:6px;">' +
+      '<button type="button" id="sireiTelemetriaCopiar" style="background:#374151; color:#fff; border:none; border-radius:6px; padding:4px 8px; cursor:pointer;">Copiar</button>' +
+      '<button type="button" id="sireiTelemetriaLimpiar" style="background:#374151; color:#fff; border:none; border-radius:6px; padding:4px 8px; cursor:pointer;">Limpiar</button>' +
+      '<button type="button" id="sireiTelemetriaCerrar" style="background:#374151; color:#fff; border:none; border-radius:6px; padding:4px 8px; cursor:pointer;">✕</button>' +
+      '</span></div>' +
+      '<div id="sireiTelemetriaResumen"></div>' +
+      '<div id="sireiTelemetriaDetalle" style="margin-top:8px;"></div>' +
+      '<div style="margin-top:8px; color:#9ca3af; font-size:0.7rem;">Abre con ?debug=1. Desactiva con localStorage.removeItem(\'sirei_debug\').</div>';
+    document.body.appendChild(panel);
+    this._panel = panel;
+    panel.querySelector('#sireiTelemetriaCerrar').addEventListener('click', function () { panel.style.display = 'none'; });
+    panel.querySelector('#sireiTelemetriaLimpiar').addEventListener('click', function () { self.limpiar(); });
+    panel.querySelector('#sireiTelemetriaCopiar').addEventListener('click', function () {
+      var texto = JSON.stringify(self.reporte(), null, 2);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(texto).then(function () {
+          if (SIREI.utils) SIREI.utils.mostrarToast('Telemetría copiada.');
+        }).catch(function () { window.prompt('Copia la telemetría:', texto); });
+      } else {
+        window.prompt('Copia la telemetría:', texto);
+      }
+    });
+    this._actualizarPanel();
+  },
+
+  _alternarPanel: function () {
+    if (!this._panel) this._montar();
+    if (!this._panel) return;
+    this._panel.style.display = (this._panel.style.display === 'none' || !this._panel.style.display) ? 'block' : 'none';
+    this._actualizarPanel();
+  },
+
+  _actualizarPanel: function () {
+    if (!this._debug || !this._panel) return;
+    var totales = this.totales();
+    var resumen = this.resumen().slice(0, 8);
+    var filas = resumen.map(function (item) {
+      return '<tr><td style="padding:3px 4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:180px;">' + item.accion + '</td>' +
+        '<td style="padding:3px 4px; text-align:right;">' + item.llamadas + '</td>' +
+        '<td style="padding:3px 4px; text-align:right;">' + item.promedioMs + ' ms</td>' +
+        '<td style="padding:3px 4px; text-align:right; color:' + (item.errores ? '#fca5a5' : '#86efac') + ';">' + item.maxMs + ' ms</td></tr>';
+    }).join('');
+    var resumenEl = this._panel.querySelector('#sireiTelemetriaResumen');
+    if (resumenEl) {
+      resumenEl.innerHTML = '<div style="color:#93c5fd;">' + totales.llamadas + ' llamadas · ' + totales.tiempoMs + ' ms · ' + totales.errores + ' error(es)</div>' +
+        '<table style="width:100%; border-collapse:collapse; margin-top:6px;"><thead><tr style="color:#9ca3af; font-size:0.7rem;"><th style="text-align:left;">Acción</th><th style="text-align:right;">N</th><th style="text-align:right;">Prom.</th><th style="text-align:right;">Máx.</th></tr></thead><tbody>' +
+        (filas || '<tr><td colspan="4" style="padding:6px; color:#9ca3af;">Sin llamadas registradas.</td></tr>') + '</tbody></table>';
+    }
+    var detalleEl = this._panel.querySelector('#sireiTelemetriaDetalle');
+    if (detalleEl) {
+      var eventos = this.eventos.slice(-3).map(function (ev) {
+        return '<div style="color:#fcd34d;">' + ev.nombre + ': ' + ev.ms + ' ms</div>';
+      }).join('');
+      var ultimas = this.llamadas.slice(-6).reverse().map(function (l) {
+        return '<div style="display:flex; justify-content:space-between; gap:6px; border-top:1px solid #1f2937; padding:2px 0;">' +
+          '<span style="color:#9ca3af;">' + l.hora + '</span>' +
+          '<span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + l.accion + '</span>' +
+          '<span style="color:' + (l.ok ? '#86efac' : '#fca5a5') + ';">' + l.ms + ' ms</span></div>';
+      }).join('');
+      detalleEl.innerHTML = eventos + '<div style="margin-top:4px; color:#9ca3af; font-size:0.7rem;">Últimas llamadas</div>' + ultimas;
+    }
+  }
+};
+
+// Arranque de la telemetría al cargar este archivo (antes que las páginas).
+try { SIREI.telemetria.instalar(); } catch (e) {}
+
+
 // ========== 1. FUNCIONES DE UTILIDAD ==========
 SIREI.utils = {
 
@@ -270,6 +558,48 @@ SIREI.api = {
   },
   eliminarActitud: function(id) {
     return this.peticionAPI('eliminarActitud', { id: id });
+  },
+
+  // ====== PANELES COMBINADOS (una sola llamada por pantalla) ======
+  // Devuelve idDocente, catálogos, asignaciones y, si hay clase activa,
+  // alumnos + asistencias + salidas.
+  panelDocente: function(nombreDocente) {
+    return this.peticionAPI('obtenerPanelDocente', { nombre: nombreDocente });
+  },
+
+  // Devuelve alumnos + evidencias + entregas de un grupo/asignatura.
+  panelAcademico: function(idGrupo, idAsignatura, idSubgrupo) {
+    return this.peticionAPI('obtenerPanelAcademico', {
+      idGrupo: idGrupo,
+      idAsignatura: idAsignatura || '',
+      idSubgrupo: idSubgrupo || ''
+    });
+  },
+
+  // ====== PREFECTO ======
+  panelPrefecto: function() {
+    return this.peticionAPI('obtenerPanelPrefecto', {});
+  },
+  alumnosPrefecto: function(params) {
+    return this.peticionAPI('obtenerAlumnosPrefecto', params || {});
+  },
+  perfilAlumnoPrefecto: function(curp, idPeriodo) {
+    return this.peticionAPI('obtenerPerfilAlumnoPrefecto', { curp: curp, idPeriodo: idPeriodo || '' });
+  },
+  gruposPrefecto: function(idPeriodo) {
+    return this.peticionAPI('obtenerGruposPrefecto', { idPeriodo: idPeriodo || '' });
+  },
+  grupoPrefecto: function(idGrupo, idPeriodo) {
+    return this.peticionAPI('obtenerGrupoPrefecto', { idGrupo: idGrupo, idPeriodo: idPeriodo || '' });
+  },
+  registrosPrefecto: function(params) {
+    return this.peticionAPI('obtenerRegistrosPrefecto', params || {});
+  },
+  guardarRegistroPrefecto: function(datos) {
+    return this.peticionAPI('guardarRegistroPrefecto', datos || {});
+  },
+  actualizarRegistroPrefecto: function(datos) {
+    return this.peticionAPI('actualizarRegistroPrefecto', datos || {});
   }
 }; // <--- CIERRE CORRECTO DEL OBJETO SIREI.api
 
