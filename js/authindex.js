@@ -105,6 +105,13 @@ document.addEventListener('DOMContentLoaded', () => {
     sessionStorage.setItem('sirei_user', usuario);
     sessionStorage.setItem('sirei_rol', data.rol || '');
     sessionStorage.setItem('sirei_nombre', data.nombreCompleto || '');
+
+    // Limpiar cachés de catálogos de una sesión anterior en este equipo.
+    try {
+      Object.keys(localStorage).forEach(function (k) {
+        if (k.indexOf('sirei_cache_v1_') === 0) localStorage.removeItem(k);
+      });
+    } catch (e) {}
     
     // Redirigir según rol (replace: el login no queda en el historial,
     // así el botón "atrás" del panel no regresa a la pantalla de acceso)
@@ -113,6 +120,8 @@ document.addEventListener('DOMContentLoaded', () => {
         window.location.replace('coordinador.html');
     } else if (rol === 'docente') {
         window.location.replace('docente.html');
+    } else if (rol === 'prefecto') {
+        window.location.replace('prefecto.html');
     } else {
         // admin o cualquier otro
         window.location.replace('admin.html');
